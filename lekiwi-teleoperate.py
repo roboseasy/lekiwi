@@ -42,8 +42,14 @@ rotation 값은 카메라가 물리적으로 어떻게 달렸는지의 문제일
 
 조작키
     리더암      : 그대로 따라 움직인다
-    베이스 주행 : W/S 전후, A/D 좌우, Z/X 회전, R/F 속도 단계, SPACE 정지
+    베이스 주행 : W/S 전후, A/D 좌우, Q/E 제자리 좌/우 회전, R/F 속도 단계, SPACE 정지
     종료        : ESC (Ctrl+C 도 됨). 종료 시 베이스를 정지시키고 연결을 끊는다.
+
+키 배치를 바꾸고 싶으면 `--robot.teleop_keys` 에 dict 전체를 넘긴다 (일부만 주면 나머지가 사라진다):
+
+    --robot.teleop_keys='{forward: w, backward: s, left: a, right: d,
+                          rotate_left: z, rotate_right: x,
+                          speed_up: r, speed_down: f, quit: esc}'
 
 호스트의 카메라 rotation 설정에 따라 프레임의 가로/세로가 바뀐다. 이 스크립트는 화면
 표시에만 쓰므로 해상도가 달라도 그냥 돌아가지만, 시작할 때 실제로 받은 카메라 이름과
@@ -73,11 +79,48 @@ from lerobot.utils.visualization_utils import (
     shutdown_visualization,
 )
 
-# LeKiwi 베이스 주행에 쓰는 키 (LeKiwiClientConfig.teleop_keys 기본값과 동일)
-BASE_KEYS = frozenset("wasdzxrf")
-SPEED_KEYS = ("r", "f")
 # 속도 단계 키가 매 프레임 먹혀서 순식간에 최대/최소로 튀는 것을 막는다.
 SPEED_KEY_INTERVAL_S = 0.4
+
+
+def default_teleop_keys() -> dict[str, str]:
+    """베이스 주행 키 배치 (LeKiwiClientConfig.teleop_keys 와 같은 형식).
+
+    lerobot 기본값에서 제자리 회전만 Z/X → Q/E 로 옮겼다. `--robot.teleop_keys` 로
+    통째로 바꿀 수 있으며, 여기 적힌 키만 주행 입력으로 인식한다.
+    """
+    return {
+        "forward": "w",
+        "backward": "s",
+        "left": "a",
+        "right": "d",
+        "rotate_left": "q",
+        "rotate_right": "e",
+        "speed_up": "r",
+        "speed_down": "f",
+        # LeKiwiClient 는 이 키를 쓰지 않는다 (종료는 이 스크립트가 ESC 로 직접 처리한다).
+        "quit": "esc",
+    }
+
+
+def base_keys(teleop_keys: dict[str, str]) -> frozenset[str]:
+    """주행 입력으로 인식할 키 집합 ("quit" 은 제외)."""
+    return frozenset(v.lower() for name, v in teleop_keys.items() if name != "quit")
+
+
+def speed_keys(teleop_keys: dict[str, str]) -> tuple[str, ...]:
+    """속도 단계 키 (throttle 대상)."""
+    return tuple(teleop_keys[name].lower() for name in ("speed_up", "speed_down") if name in teleop_keys)
+
+
+def base_help(teleop_keys: dict[str, str]) -> str:
+    """현재 키 배치에 맞춘 한 줄짜리 안내 문구."""
+    k = {name: teleop_keys.get(name, "?").upper() for name in default_teleop_keys()}
+    return (
+        f"{k['forward']}/{k['backward']} 전후, {k['left']}/{k['right']} 좌우, "
+        f"{k['rotate_left']}/{k['rotate_right']} 제자리 회전, "
+        f"{k['speed_up']}/{k['speed_down']} 속도, SPACE 정지"
+    )
 
 
 def default_cameras() -> dict[str, CameraConfig]:
@@ -102,6 +145,9 @@ class LeKiwiRobotArgs:
     port_zmq_observations: int = 5556
     connect_timeout_s: int = 5
     cameras: dict[str, CameraConfig] = field(default_factory=default_cameras)
+    # 베이스 주행 키 배치. 예: --robot.teleop_keys='{rotate_left: z, rotate_right: x}' 처럼
+    # 일부만 바꾸는 게 아니라 dict 전체를 주어야 한다.
+    teleop_keys: dict[str, str] = field(default_factory=default_teleop_keys)
 
     def to_config(self) -> LeKiwiClientConfig:
         return LeKiwiClientConfig(
@@ -111,6 +157,7 @@ class LeKiwiRobotArgs:
             port_zmq_observations=self.port_zmq_observations,
             connect_timeout_s=self.connect_timeout_s,
             cameras=self.cameras,
+            teleop_keys=self.teleop_keys,
         )
 
 
@@ -237,18 +284,19 @@ class SpeedKeyThrottle:
     올리고 내리기 때문에, 최소 간격을 두고 한 번씩만 통과시킨다.
     """
 
-    def __init__(self, min_interval_s: float = SPEED_KEY_INTERVAL_S):
+    def __init__(self, keys: tuple[str, ...], min_interval_s: float = SPEED_KEY_INTERVAL_S):
+        self.keys = keys
         self.min_interval_s = min_interval_s
         self._last_applied = 0.0
 
     def filter(self, keys: dict) -> dict:
-        if not any(k in keys for k in SPEED_KEYS):
+        if not any(k in keys for k in self.keys):
             return keys
         now = time.perf_counter()
         if now - self._last_applied >= self.min_interval_s:
             self._last_applied = now
             return keys
-        return {k: v for k, v in keys.items() if k not in SPEED_KEYS}
+        return {k: v for k, v in keys.items() if k not in self.keys}
 
 
 def make_keyboard(cfg: LeKiwiTeleopConfig):
@@ -265,6 +313,7 @@ def make_keyboard(cfg: LeKiwiTeleopConfig):
         backend = "pynput" if pynput_can_capture() else "terminal"
 
     key_state = _KeyState(cfg.base_hold_s)
+    drive_keys = base_keys(cfg.robot.teleop_keys)
 
     def dispatch(name: str) -> None:
         key = name.lower()
@@ -273,7 +322,7 @@ def make_keyboard(cfg: LeKiwiTeleopConfig):
             state["quit"] = True
         elif key == "space":
             key_state.clear()
-        elif key in BASE_KEYS:
+        elif key in drive_keys:
             key_state.press(key)
 
     if backend == "pynput":
@@ -343,7 +392,7 @@ def teleop_loop(
     state: dict,
     cfg: LeKiwiTeleopConfig,
 ) -> None:
-    throttle = SpeedKeyThrottle()
+    throttle = SpeedKeyThrottle(speed_keys(cfg.robot.teleop_keys))
     start = time.perf_counter()
     control_interval = 1.0 / cfg.fps
 
@@ -427,7 +476,7 @@ def teleoperate(cfg: LeKiwiTeleopConfig) -> None:
         keyboard.connect()
 
         print(
-            "\n조작키 | 베이스: W/S 전후, A/D 좌우, Z/X 회전, R/F 속도, SPACE 정지"
+            f"\n조작키 | 베이스: {base_help(cfg.robot.teleop_keys)}"
             "\n       | 종료  : ESC\n"
         )
 
