@@ -66,11 +66,17 @@ rotation 값은 카메라가 물리적으로 어떻게 달렸는지의 문제일
 
 조작키
     리더암      : 그대로 따라 움직인다
-    베이스 주행 : W/S 전후, A/D 좌우, Z/X 회전, R/F 속도 단계, SPACE 정지
-    녹화 제어   : →(또는 N) 현재 에피소드 종료, ←  재녹화, ESC(또는 Q) 녹화 중단
+    베이스 주행 : W/S 전후, A/D 좌우, Q/E 제자리 좌/우 회전, R/F 속도 단계, SPACE 정지
+    녹화 제어   : →(또는 N) 현재 에피소드 종료, ←  재녹화, ESC 녹화 중단
+
+키 배치를 바꾸고 싶으면 `--robot.teleop_keys` 에 dict 전체를 넘긴다 (일부만 주면 나머지가 사라진다):
+
+    --robot.teleop_keys='{forward: w, backward: s, left: a, right: d,
+                          rotate_left: z, rotate_right: x,
+                          speed_up: r, speed_down: f, quit: esc}'
 
 주의: 베이스 주행용 R/F 와 lerobot 기본 녹화 단축키(r=재녹화, q=중단)가 겹치기
-때문에, 여기서는 재녹화를 ← 키에만 할당했다.
+때문에, 여기서는 재녹화를 ← 키에만, 녹화 중단을 ESC 에만 할당했다 (q 는 제자리 좌회전에 쓴다).
 """
 
 import getpass
@@ -78,6 +84,7 @@ import logging
 import os
 import time
 from dataclasses import dataclass, field
+from pathlib import Path
 from pprint import pformat
 
 from lerobot.cameras import CameraConfig  # noqa: F401  (draccus 서브클래스 등록용)
@@ -98,6 +105,7 @@ from lerobot.teleoperators.keyboard import KeyboardTeleop, KeyboardTeleopConfig
 from lerobot.teleoperators.so_leader import SOLeader, SOLeaderTeleopConfig
 from lerobot.teleoperators.teleoperator import Teleoperator
 from lerobot.utils.errors import DeviceNotConnectedError
+from lerobot.utils.constants import HF_LEROBOT_HOME
 from lerobot.utils.feature_utils import combine_feature_dicts
 from lerobot.utils.keyboard_input import (
     TerminalKeyListener,
@@ -107,8 +115,39 @@ from lerobot.utils.keyboard_input import (
 from lerobot.utils.utils import init_logging, log_say
 from lerobot.utils.visualization_utils import init_visualization, shutdown_visualization
 
-# LeKiwi 베이스 주행에 쓰는 키 (LeKiwiClientConfig.teleop_keys 기본값과 동일)
-BASE_KEYS = frozenset("wasdzxrf")
+def default_teleop_keys() -> dict[str, str]:
+    """베이스 주행 키 배치 (LeKiwiClientConfig.teleop_keys 와 같은 형식).
+
+    lerobot 기본값에서 제자리 회전만 Z/X → Q/E 로 옮겼다. `--robot.teleop_keys` 로
+    통째로 바꿀 수 있으며, 여기 적힌 키만 주행 입력으로 인식한다.
+    """
+    return {
+        "forward": "w",
+        "backward": "s",
+        "left": "a",
+        "right": "d",
+        "rotate_left": "q",
+        "rotate_right": "e",
+        "speed_up": "r",
+        "speed_down": "f",
+        # LeKiwiClient 는 이 키를 쓰지 않는다 (녹화 중단은 이 스크립트가 ESC 로 직접 처리한다).
+        "quit": "esc",
+    }
+
+
+def base_keys(teleop_keys: dict[str, str]) -> frozenset[str]:
+    """주행 입력으로 인식할 키 집합 ("quit" 은 제외)."""
+    return frozenset(v.lower() for name, v in teleop_keys.items() if name != "quit")
+
+
+def base_help(teleop_keys: dict[str, str]) -> str:
+    """현재 키 배치에 맞춘 한 줄짜리 안내 문구."""
+    k = {name: teleop_keys.get(name, "?").upper() for name in default_teleop_keys()}
+    return (
+        f"{k['forward']}/{k['backward']} 전후, {k['left']}/{k['right']} 좌우, "
+        f"{k['rotate_left']}/{k['rotate_right']} 제자리 회전, "
+        f"{k['speed_up']}/{k['speed_down']} 속도, SPACE 정지"
+    )
 
 
 def default_cameras() -> dict[str, CameraConfig]:
@@ -154,6 +193,8 @@ class LeKiwiRobotArgs:
     port_zmq_observations: int = 5556
     connect_timeout_s: int = 5
     cameras: dict[str, CameraConfig] = field(default_factory=default_cameras)
+    # 베이스 주행 키 배치. 일부만 바꾸는 게 아니라 dict 전체를 주어야 한다.
+    teleop_keys: dict[str, str] = field(default_factory=default_teleop_keys)
 
     def to_config(self) -> LeKiwiClientConfig:
         return LeKiwiClientConfig(
@@ -163,6 +204,7 @@ class LeKiwiRobotArgs:
             port_zmq_observations=self.port_zmq_observations,
             connect_timeout_s=self.connect_timeout_s,
             cameras=self.cameras,
+            teleop_keys=self.teleop_keys,
         )
 
 
@@ -239,6 +281,25 @@ class LeKiwiRecordConfig:
                 "'계정/데이터셋이름' 이어야 합니다. "
                 "환경변수를 쓴다면 값이 비어있지 않은지 확인하세요 (예: export TASK_NAME=lekiwi_pick_cube)."
             )
+
+        if self.resume:
+            # LeRobotDataset.resume() 은 root 를 반드시 요구한다 (허브 스냅샷 캐시에 쓰면 캐시가 깨진다).
+            # 지정하지 않았으면 기본 녹화 위치를 대신 채워 준다.
+            if not self.dataset.root:
+                self.dataset.root = str(HF_LEROBOT_HOME / self.dataset.repo_id)
+                logging.info("--resume=true: --dataset.root 이 없어 기본 경로를 씁니다: %s", self.dataset.root)
+            if not Path(self.dataset.root).exists():
+                raise SystemExit(
+                    f"error: 이어서 녹화할 데이터셋이 없습니다: {self.dataset.root}\n"
+                    "  - --dataset.repo_id 가 맞는지 확인하세요.\n"
+                    "  - 데이터셋이 다른 폴더에 있다면 --dataset.root=/경로 를 지정하세요.\n"
+                    "  - 처음 녹화하는 것이라면 --resume 를 빼세요."
+                )
+            if self.stamp_repo_id:
+                raise SystemExit(
+                    "error: --resume 와 --stamp_repo_id 는 함께 쓸 수 없습니다 "
+                    "(이어 녹화하려면 기존 repo_id 를 그대로 써야 합니다)."
+                )
 
 
 class _KeyState:
@@ -322,6 +383,7 @@ def make_events_and_keyboard(cfg: LeKiwiRecordConfig):
         backend = "pynput" if pynput_can_capture() else "terminal"
 
     key_state = _KeyState(cfg.base_hold_s)
+    drive_keys = base_keys(cfg.robot.teleop_keys)
 
     def dispatch(name: str) -> None:
         key = name.lower()
@@ -329,11 +391,11 @@ def make_events_and_keyboard(cfg: LeKiwiRecordConfig):
             apply_recording_control("right", events)
         elif key == "left":
             apply_recording_control("left", events)
-        elif key in ("esc", "q"):
+        elif key == "esc":
             apply_recording_control("esc", events)
         elif key == "space":
             key_state.clear()
-        elif key in BASE_KEYS:
+        elif key in drive_keys:
             key_state.press(key)
 
     if backend == "pynput":
@@ -533,8 +595,8 @@ def record(cfg: LeKiwiRecordConfig) -> LeRobotDataset:
         keyboard.connect()
 
         print(
-            "\n조작키 | 베이스: W/S 전후, A/D 좌우, Z/X 회전, R/F 속도, SPACE 정지"
-            "\n       | 녹화  : →(N) 에피소드 종료, ← 재녹화, ESC(Q) 녹화 중단\n"
+            f"\n조작키 | 베이스: {base_help(cfg.robot.teleop_keys)}"
+            "\n       | 녹화  : →(N) 에피소드 종료, ← 재녹화, ESC 녹화 중단\n"
         )
 
         with VideoEncodingManager(dataset):

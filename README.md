@@ -259,6 +259,20 @@ python -m lerobot.robots.lekiwi.lekiwi_host \
 | `--robot.port_zmq_observations` | `5556` | 관측 채널 포트 |
 | `--robot.connect_timeout_s` | `5` | 접속 타임아웃 |
 | `--robot.cameras` | `front`(/dev/video0), `wrist`(/dev/video2), 640x480@30 | 호스트가 보내오는 카메라 선언 |
+| `--robot.teleop_keys` | W/S 전후, A/D 좌우, **Q/E 제자리 회전**, R/F 속도 | 베이스 주행 키 배치 (teleoperate / record). dict **전체**를 넘겨야 함 |
+
+`--robot.teleop_keys` 는 lerobot 의 `LeKiwiClientConfig.teleop_keys` 와 같은 dict 이며,
+기본값에서 **제자리 회전만 Z/X → Q/E 로** 옮겨 놓았습니다. 예전 배치(Z/X)로 되돌리려면
+dict 전체를 넘깁니다 (일부만 주면 나머지 키가 사라집니다).
+
+```bash
+--robot.teleop_keys='{forward: w, backward: s, left: a, right: d,
+                      rotate_left: z, rotate_right: x,
+                      speed_up: r, speed_down: f, quit: esc}'
+```
+
+`quit` 항목은 형식을 맞추기 위한 자리로, 실제 종료는 두 스크립트가 ESC 로 직접 처리합니다.
+실행할 때 출력되는 조작키 안내도 이 설정을 따라 바뀝니다.
 
 ### `--teleop.*` — PC 에 USB 로 물린 리더암 (teleoperate / record 전용)
 
@@ -333,7 +347,7 @@ python lekiwi-teleoperate.py \
 
 ```
 리더암      : 그대로 따라 움직인다
-베이스 주행 : W/S 전후, A/D 좌우, Z/X 회전, R/F 속도 단계, SPACE 정지
+베이스 주행 : W/S 전후, A/D 좌우, Q/E 제자리 좌/우 회전, R/F 속도 단계, SPACE 정지
 종료        : ESC (Ctrl+C 도 됨)
 ```
 
@@ -385,7 +399,7 @@ python lekiwi-record.py \
 
 | 인자 | 기본값 | 설명 |
 | --- | --- | --- |
-| `--resume` | `false` | 기존 데이터셋에 이어서 녹화 (로봇 호환성 검사 포함) |
+| `--resume` | `false` | 기존 데이터셋에 **이어서** 녹화 (아래 참고) |
 | `--stamp_repo_id` | `false` | repo_id 뒤에 날짜/시간을 붙여 매 세션 새 이름 |
 | `--check_cameras` | `true` | 첫 관측으로 카메라 이름/해상도 검사 |
 | `--auto_camera_shape` | `true` | 실제 프레임에 맞춰 설정 자동 보정. `false` 면 불일치 시 에러 |
@@ -394,12 +408,36 @@ python lekiwi-record.py \
 
 ```
 리더암      : 그대로 따라 움직인다
-베이스 주행 : W/S 전후, A/D 좌우, Z/X 회전, R/F 속도 단계, SPACE 정지
-녹화 제어   : →(또는 N) 현재 에피소드 종료, ← 재녹화, ESC(또는 Q) 녹화 중단
+베이스 주행 : W/S 전후, A/D 좌우, Q/E 제자리 좌/우 회전, R/F 속도 단계, SPACE 정지
+녹화 제어   : →(또는 N) 현재 에피소드 종료, ← 재녹화, ESC 녹화 중단
 ```
 
 > 베이스 주행의 R/F 가 lerobot 기본 단축키(r=재녹화, q=중단)와 겹치기 때문에,
-> **재녹화는 ← 키에만** 할당했습니다.
+> **재녹화는 ← 키에만, 녹화 중단은 ESC 에만** 할당했습니다 (`q` 는 제자리 좌회전입니다).
+
+**이어서 녹화하기 (`--resume=true`)**
+
+같은 `--dataset.repo_id` 에 에피소드를 더 쌓습니다. `--dataset.num_episodes` 는 **이번 세션에
+추가로 녹화할 개수**입니다 (기존 10개 + `--dataset.num_episodes=5` → 총 15개).
+
+```bash
+python lekiwi-record.py \
+    --dataset.repo_id=${HF_USER}/${TASK_NAME} \
+    --dataset.single_task="Pick up the cube and place it in the box" \
+    --dataset.num_episodes=5 \
+    --dataset.episode_time_s=15 \
+    --dataset.reset_time_s=3 \
+    --resume=true
+```
+
+- 저장 위치를 따로 주지 않으면 기본 경로(`$HF_LEROBOT_HOME/<repo_id>`,
+  보통 `~/.cache/huggingface/lerobot/<repo_id>`)를 씁니다. 폴더가 없으면 어디를 찾았는지
+  알려 주고 멈춥니다 — 다른 곳에 있다면 `--dataset.root=/경로`.
+- 기존 데이터셋과 **`robot_type` / `fps` / feature 가 모두 같아야** 합니다
+  (`sanity_check_dataset_robot_compatibility`). 카메라 이름·해상도가 지난번과 다르면 거부되므로,
+  호스트를 같은 설정으로 띄우세요.
+- `--stamp_repo_id` 와는 함께 쓸 수 없습니다 (이어 녹화는 기존 이름을 그대로 써야 함).
+- `--dataset.push_to_hub=true` 를 주면 끝난 뒤 **전체 데이터셋**이 허브에 올라갑니다.
 
 **동작 순서**
 
