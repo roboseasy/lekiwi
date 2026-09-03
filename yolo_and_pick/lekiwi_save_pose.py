@@ -55,6 +55,8 @@ def load_pose(path: Path) -> dict[str, float]:
     """저장된 자세 파일을 읽는다 ({"arm_shoulder_pan.pos": ..., ...} 형식)."""
     data = json.loads(Path(path).read_text())
     pose = data["pose"] if "pose" in data else data
+    if not pose or not all(isinstance(v, (int, float)) for v in pose.values()):
+        raise ValueError(f"{path} 는 자세 파일이 아닙니다 (관절→값 dict 또는 {{'pose': {{...}}}} 형식이어야 함)")
     return {k: float(v) for k, v in pose.items()}
 
 
@@ -83,7 +85,10 @@ def main(cfg: SavePoseConfig) -> None:
             print(f"{cfg.pose_dir} 에 저장된 자세가 없습니다.")
             return
         for f in files:
-            pose = load_pose(f)
+            try:
+                pose = load_pose(f)
+            except ValueError:
+                continue  # grasp_ref.json 같은 다른 종류의 파일은 건너뛴다
             print(f"{f.stem:>12s}: " + ", ".join(f"{k.removesuffix('.pos')}={v:.1f}" for k, v in pose.items()))
         return
 

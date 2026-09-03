@@ -112,7 +112,7 @@ class YoloArgs:
 
     # 가중치 경로. download_hf_model.py 가 받아 두는 위치가 기본값.
     path: str = str(DEFAULT_MODEL_PATH)
-    conf: float = 0.5
+    conf: float = 0.4
     iou: float = 0.45
     imgsz: int = 640
     # None 이면 ultralytics 가 알아서 고른다 ("cpu", "0", "cuda:0" 등).

@@ -1,0 +1,15 @@
+{
+  "name": "grasp_ref",
+  "saved_at": "2026-09-04 01:43:03",
+  "source": "스크린샷 2026-09-04 01-43-03.png (GRASP_READY 화면에서 측정)",
+  "view": "wrist",
+  "frame_size": [640, 480],
+  "note": "화면 중심(320,240) 기준 큐브 박스의 상대 위치. 집기 직전 '완벽한' 위치. 박스 아래 변은 화면 밖으로 잘려 있어 중심 y 대신 위 변(top_dy)을 쓴다.",
+  "x_anchor": "left",
+  "x_target_dx": 0,
+  "y_anchor": "top",
+  "y_target_dy": -33,
+  "size_metric": "width",
+  "target_size_px": 260,
+  "measured_box_xyxy": [321, 207, 581, 479]
+}

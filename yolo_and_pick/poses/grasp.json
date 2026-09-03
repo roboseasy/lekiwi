@@ -1,0 +1,13 @@
+{
+  "name": "grasp",
+  "saved_at": "2026-09-04 01:25:53",
+  "robot_id": "lekiwi01",
+  "pose": {
+    "arm_shoulder_pan.pos": -3.78021978021978,
+    "arm_shoulder_lift.pos": 70.54945054945055,
+    "arm_elbow_flex.pos": -23.78021978021978,
+    "arm_wrist_flex.pos": 51.73626373626373,
+    "arm_wrist_roll.pos": -9.45054945054945,
+    "arm_gripper.pos": 27.79594506213211
+  }
+}

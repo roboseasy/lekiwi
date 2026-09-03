@@ -1,0 +1,15 @@
+{
+  "name": "grasp_ref",
+  "saved_at": "2026-09-04 01:54:56",
+  "source": "스크린샷 2026-09-04 01-54-56.png (GRASP_READY 화면의 실시간 검출 박스에서 측정)",
+  "view": "wrist",
+  "frame_size": [640, 480],
+  "note": "화면 중심(320,240) 기준 큐브 박스의 상대 위치. 집기 직전 위치. 박스 아래 변은 화면 밖으로 잘릴 수 있어 중심 y 대신 위 변(top_dy)을 쓴다.",
+  "x_anchor": "left",
+  "x_target_dx": -23,
+  "y_anchor": "top",
+  "y_target_dy": -139,
+  "size_metric": "width",
+  "target_size_px": 288,
+  "measured_box_xyxy": [297, 101, 585, 424]
+}

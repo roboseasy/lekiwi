@@ -37,10 +37,48 @@ r"""YOLO 로 잡은 큐브 쪽으로 LeKiwi 를 몰아가서, 큐브가 화면 �
        이상 정렬에서 벗어나거나 사라지면 팔을 시작 자세로 되돌린 뒤(ARM_TO_HOME) 다시 접근한다.
        팔이 움직이는 동안과 PICK_READY 에서는 바퀴를 절대 움직이지 않는다.
        --pick.exit_when_ready=true 면 PICK_READY 에서 스크립트를 끝낸다 (팔은 그 자세로 남는다).
+    7. 집기 준비 (--grasp.*, wrist_servo.py): PICK_READY 에서 --grasp.pick_dwell_s 뒤
+         7-0. 손목 뷰 검출은 정리해서 쓴다: 화면 왼쪽 절반(--grasp.left_region_ratio)에 중심이 있는 박스는
+              conf ≥ --grasp.left_min_conf(0.85) 만 인정 (보라색 그리퍼 손가락 오검출 방지), 그 뒤
+              가장 큰 박스 **하나만** 남긴다 (--grasp.single_box). 화면에도 그 하나만 그린다.
+         7-1. 그리퍼를 최대로 연다 (--grasp.gripper_open_pct=100 = 캘리브레이션 range_max)      [GRIPPER_OPEN]
+         7-2. 손목 뷰에서 큐브 박스의 **왼쪽 변**이 화면 가운데 세로선에 오고(±--grasp.x_tolerance_px),
+              화면 중앙 높이가 박스 위/아래 변 사이에 들도록 shoulder_pan(가로)/wrist_flex(세로)를
+              조정한다. 손목 카메라가 그리퍼 왼쪽에 있어 큐브가 화면 오른쪽에 있어야 집히기 때문
+              (--grasp.x_anchor=left|center|right)                                              [WRIST_CENTERING]
+         7-3. 중앙점이 박스 안에 있는 동안만 팔을 뻗어 박스가 점점 커지게 한다                    [WRIST_APPROACH]
+              기본은 미리 저장한 grasp 자세(poses/grasp.json) 방향으로 보간 (--grasp.approach_mode=pose),
+              또는 관절별 속도로 뻗기 (--grasp.approach_mode=joints --grasp.reach_joints='{...}')
+         7-4. 손목 뷰 박스 폭이 --grasp.target_size_px 이상이고 가로/세로 기준이 맞으면 정지·유지   [GRASP_READY]
+              크기는 됐는데 기준이 안 맞으면 더 뻗지 않고 보정만                                    [WRIST_REFINE]
+       목표 구성은 poses/grasp_ref.json (--grasp.ref_file) 에서 읽는다: 집기 직전 '완벽한' 화면에서의
+       박스 왼쪽 변 dx / 위 변 dy / 폭. 서보 화면에서 **S** 를 누르면 지금 구성이 그 파일로 저장된다.
+         7-5. GRASP_READY 에서 --grasp.grasp_dwell_s 뒤 그리퍼를 닫는다 (--grasp.gripper_close_time_s 동안 보간).
+              목표는 큐브를 물고 저장한 poses/grasp_closed.json 의 arm_gripper.pos (--grasp.close_pose_file,
+              측정값 15.1%), 또는 --grasp.gripper_close_pct 직접 지정. --grasp.gripper_close_extra_pct 만큼
+              더 조일 수 있다. 닫히면 유지                                                          [GRIPPER_CLOSE → GRASPED]
+              --grasp.exit_when_grasped=true 면 여기서 종료 (팔은 큐브를 문 채 남는다).
+    8. 집기 판별 (--check.*, grasp_check.py): GRASPED 뒤 매 프레임
+         front 뷰 큐브 박스의 바로 왼쪽/오른쪽 띠(--check.band_px)에 보라색 그리퍼가 있고
+         **동시에** wrist 뷰 큐브 박스의 왼쪽/오른쪽 변에도 보라색이 있으면 그 프레임 OK.
+         OK 가 --check.confirm_frames 연속이면 GRASP_OK, --check.timeout_s 안에 못 채우면 GRASP_FAIL.
+         보라색은 HSV 범위(--check.hue_min/hue_max/sat_min/val_min, 기본 그리퍼 색 측정값)로 잡는다.
+         결과에 따라 종료하려면 --check.exit_on_result=true.
+         GRASP_FAIL 이면 집기 재시도 (--grasp.max_retries, 기본 5): 그리퍼를 다시 벌리고 손목 뷰 목표 폭을
+         --grasp.retry_size_step_px 키워(더 가까이) 다시 내려간 뒤 닫고 다시 판별한다. 맞을 때까지 반복.
+         5번 다 실패하면 그리퍼를 벌리고 시작 자세로 돌아가(--grasp.pick_retry_wait_s=3초 대기) 접근부터
+         다시 한다. pick 시도는 --grasp.max_pick_attempts(기본 5)까지, 그것도 다 쓰면 멈춘다 [GIVE_UP].
+    10. 마무리: GRASP_OK 면 큐브를 문 채 --grasp.carry_time_s(3초) 동안 시작 자세로 돌아간다 [CARRY_HOME → DONE].
+       이것이 task 의 끝. 기본은 그 자세로 유지하며 계속 돌고, --grasp.exit_when_done=true 면 종료한다.
+    9. 높이 힌트 (--grasp.front_hint): 손목 서보 중 front 뷰 **정중앙** 창(--grasp.front_hint_win_px)에 보라색
+       그리퍼가 보이면(비율 ≥ --grasp.front_hint_min_ratio) 딱 알맞게 내려온 높이 → 가로만 맞으면 바로 READY.
+       첫 시도에서만 쓰고, 재시도에서는 무시하고 키운 목표 폭까지 더 내려간다.
+       큐브를 놓치면 그 자리에서 멈춘다 [WRIST_LOST]. 이 단계 전체를 끄려면 --grasp.enabled=false.
 
-pick 자세 저장 (리더암/손으로 팔을 원하는 자세로 만든 뒤):
+자세 저장 (리더암/손으로 팔을 원하는 자세로 만든 뒤):
 
-    python lekiwi_save_pose.py --name pre_pick
+    python lekiwi_save_pose.py --name pre_pick     # 6. 의 pick 직전 자세
+    python lekiwi_save_pose.py --name grasp        # 7-3. 의 뻗는 방향 끝점 (큐브를 집는 순간의 자세)
 
 목표 크기 재는 법: lekiwi_yolo_view.py 로 원하는 거리에 큐브를 두고 화면의 박스 폭(px)을 읽어
 `--approach.target_size_px` 로 넘긴다. 기본값 117 은 640x480 front 뷰에서 큐브가 화면 아래쪽에
@@ -76,6 +114,7 @@ pick 자세 저장 (리더암/손으로 팔을 원하는 자세로 만든 뒤):
 
 창 조작키
     SPACE : 바퀴 제어 일시정지/재개 (일시정지 중에는 정지 명령만 보낸다)
+    S     : 지금 손목 뷰의 박스-화면중심 관계를 집기 참조(poses/grasp_ref.json)로 저장
     Q/ESC : 종료 (바퀴 정지 후 연결 해제)
 
 주의
@@ -116,6 +155,9 @@ from lekiwi_yolo_view import (
 )
 
 from lekiwi_save_pose import load_pose
+from grasp_check import GraspChecker, GraspCheckArgs, center_purple_ratio, draw_grasp_check
+from wrist_servo import GRIPPER_JOINT, GraspArgs, WristServo, filter_wrist_dets, save_reference
+from wrist_servo import largest as wrist_largest
 
 SCRIPT_DIR = Path(__file__).resolve().parent
 DEFAULT_PICK_POSE = SCRIPT_DIR / "poses" / "pre_pick.json"
@@ -133,6 +175,21 @@ STATE_COLORS = {
     "ARM_TO_PICK": (255, 255, 0),
     "PICK_READY": (0, 255, 0),
     "ARM_TO_HOME": (255, 255, 0),
+    "GRIPPER_OPEN": (255, 255, 0),
+    "WRIST_CENTERING": (0, 165, 255),
+    "WRIST_APPROACH": (255, 200, 0),
+    "WRIST_LOST": (0, 0, 255),
+    "WRIST_REFINE": (0, 200, 255),
+    "GRASP_READY": (0, 255, 0),
+    "GRIPPER_CLOSE": (255, 255, 0),
+    "GRASPED": (0, 255, 0),
+    "GRASP_CHECK": (0, 200, 255),
+    "HOME_WAIT": (200, 200, 200),
+    "GIVE_UP": (0, 0, 255),
+    "CARRY_HOME": (0, 255, 0),
+    "DONE": (0, 255, 0),
+    "GRASP_OK": (0, 255, 0),
+    "GRASP_FAIL": (0, 0, 255),
     "ALIGNING": (0, 165, 255),
     "ALIGNED": (0, 220, 0),
     "PAUSED": (255, 120, 0),
@@ -227,6 +284,8 @@ class LeKiwiPickConfig:
     yolo: YoloArgs = field(default_factory=YoloArgs)
     approach: ApproachArgs = field(default_factory=ApproachArgs)
     pick: PickArgs = field(default_factory=PickArgs)
+    grasp: GraspArgs = field(default_factory=GraspArgs)
+    check: GraspCheckArgs = field(default_factory=GraspCheckArgs)
 
     # 화면에 표시할 카메라 (front 왼쪽, wrist 오른쪽 — lekiwi_yolo_view.py 와 동일). approach.view 는 자동으로 포함된다.
     # 추론은 모든 뷰에 대해 한 배치로 돌리고, 정렬 제어에는 approach.view 만 쓴다.
@@ -285,6 +344,15 @@ class LeKiwiPickConfig:
             )
         if a.view not in self.views:
             self.views = [a.view, *self.views]
+        if self.grasp.enabled and self.pick.enabled:
+            self.grasp.validate()
+            if self.grasp.view not in self.views:
+                self.views = [*self.views, self.grasp.view]
+            if self.check.enabled:
+                self.check.validate()
+                for v in (self.check.front_view, self.check.wrist_view):
+                    if v not in self.views:
+                        self.views = [*self.views, v]
         if self.pick.enabled:
             if self.pick.move_time_s <= 0:
                 raise SystemExit(f"error: --pick.move_time_s 는 0 보다 커야 합니다 (받은 값: {self.pick.move_time_s})")
@@ -544,14 +612,27 @@ def status_line(ap: Approacher, cmd: dict[str, float], state_label: str, hz: flo
 
 
 class ArmSequencer:
-    """접근 완료 후 팔을 pick 자세로, 벗어나면 다시 시작 자세로 보내는 상태기.
+    """접근 완료 후 팔을 pick 자세로 보내고, 이어서 그리퍼를 열고 손목 뷰 서보로 큐브에 다가가는 상태기.
 
-    상태: HOME(시작 자세 유지) → TO_PICK(보간 이동) → PICK(pick 자세 유지) → TO_HOME(보간 복귀) → HOME
+    상태:
+        HOME(시작 자세 유지) → TO_PICK(보간) → PICK(pick 자세, 잠깐 대기)
+            → OPEN_GRIPPER(그리퍼 최대 열기) → SERVO(손목 뷰 보며 뻗기, WristServo) → GRASP_READY(정지·유지)
+        PICK 에서 큐브가 벗어나면 TO_HOME(보간 복귀) → HOME 으로 돌아가 다시 접근한다.
+        --grasp.enabled=false 면 PICK 에서 멈춘다.
     팔이 HOME 이 아닐 때는 바퀴를 움직이면 안 된다 (`base_locked`).
     """
 
-    def __init__(self, home: dict[str, float], pick: dict[str, float] | None, cfg: PickArgs):
+    def __init__(
+        self,
+        home: dict[str, float],
+        pick: dict[str, float] | None,
+        cfg: PickArgs,
+        grasp_cfg: GraspArgs,
+        grasp_pose: dict[str, float] | None = None,
+    ):
         self.cfg = cfg
+        self.grasp_cfg = grasp_cfg
+        self.grasp_pose = dict(grasp_pose) if grasp_pose else None
         self.home = dict(home)
         self.pick = dict(pick) if pick else None
         self.state = "HOME"
@@ -559,60 +640,269 @@ class ArmSequencer:
         self._from: dict[str, float] = {}
         self._to: dict[str, float] = {}
         self._t0 = 0.0
+        self._dur = 1.0
+        self._pick_t = 0.0
         self.progress = 0.0
         self.drift = 0
+        self.servo: WristServo | None = None
         self.just_ready = False  # 이번 프레임에 PICK 에 도달했는지
+        self.grasp_just_ready = False  # 이번 프레임에 GRASP_READY 가 됐는지
+        self.just_grasped = False  # 이번 프레임에 그리퍼가 다 닫혔는지 (GRASPED)
+        self._ready_t = 0.0
+        self.retries = 0  # 이번 pick 시도 안에서 GRIP FAIL 뒤 집기를 재시도한 횟수
+        self.pick_attempts = 0  # pick 자세로 내려간 횟수 (첫 시도 포함)
+        self._base_target_size = grasp_cfg.target_size_px  # 재시도로 키운 목표 크기를 새 pick 시도에서 되돌리기 위해
+        self._after_open = "SERVO"  # OPEN_GRIPPER 가 끝나면 갈 곳: SERVO(집기) / HOME(포기하고 복귀)
+        self._home_wait_t0 = 0.0
+        self.gave_up = False  # pick 시도를 다 써서 포기했는지
+        self.just_done = False  # 이번 프레임에 큐브를 문 채 시작 자세에 도착했는지
+
+    @property
+    def can_retry(self) -> bool:
+        return self.state == "GRASPED" and self.retries < self.grasp_cfg.max_retries
+
+    @property
+    def can_restart_pick(self) -> bool:
+        return self.state == "GRASPED" and self.pick_attempts < self.grasp_cfg.max_pick_attempts
+
+    def retry(self, now: float) -> None:
+        """GRIP FAIL → 그리퍼를 다시 벌리고(OPEN_GRIPPER), 끝나면 서보를 더 깊이 이어간다."""
+        self.retries += 1
+        self._after_open = "SERVO"
+        target = dict(self.current)
+        target[GRIPPER_JOINT] = self.grasp_cfg.gripper_open_pct
+        self._start_move(target, "OPEN_GRIPPER", now, self.grasp_cfg.gripper_open_time_s)
+
+    def restart_pick(self, now: float) -> None:
+        """집기 재시도를 다 썼다 → 그리퍼를 벌리고 시작 자세로 돌아가 잠깐 기다린 뒤 접근부터 다시."""
+        self._after_open = "HOME"
+        target = dict(self.current)
+        target[GRIPPER_JOINT] = self.grasp_cfg.gripper_open_pct
+        self._start_move(target, "OPEN_GRIPPER", now, self.grasp_cfg.gripper_open_time_s)
+
+    def give_up(self) -> None:
+        """pick 시도까지 다 썼다 → 그 자리에서 멈춘다 (더는 움직이지 않음)."""
+        self.gave_up = True
+
+    def carry_home(self, now: float) -> None:
+        """집기 성공 → 큐브를 문 채(그리퍼 그대로) 시작 자세로 천천히 돌아간다. 도착하면 DONE."""
+        target = dict(self.home)
+        target[GRIPPER_JOINT] = self.current.get(GRIPPER_JOINT, target.get(GRIPPER_JOINT, 0.0))  # 그리퍼는 닫힌 채
+        self._start_move(target, "CARRY_HOME", now, self.grasp_cfg.carry_time_s)
+
+    @property
+    def done(self) -> bool:
+        return self.state == "DONE"
 
     @property
     def enabled(self) -> bool:
         return self.cfg.enabled and self.pick is not None
 
     @property
+    def grasp_enabled(self) -> bool:
+        return self.enabled and self.grasp_cfg.enabled
+
+    @property
     def base_locked(self) -> bool:
         return self.state != "HOME"
 
-    def _start_move(self, target: dict[str, float], state: str, now: float) -> None:
+    def _start_move(self, target: dict[str, float], state: str, now: float, duration_s: float) -> None:
         self._from = dict(self.current)
         self._to = {k: target.get(k, self.current[k]) for k in self.current}
         self._t0 = now
+        self._dur = max(duration_s, 1e-3)
         self.progress = 0.0
         self.state = state
 
-    def update(self, aligned: bool, tracking_ok: bool, allow_motion: bool, now: float) -> dict[str, float]:
+    def _interpolate(self, now: float) -> float:
+        a = min(1.0, (now - self._t0) / self._dur)
+        self.progress = a
+        self.current = {k: self._from[k] + (self._to[k] - self._from[k]) * a for k in self.current}
+        return a
+
+    def update(
+        self,
+        aligned: bool,
+        tracking_ok: bool,
+        allow_motion: bool,
+        now: float,
+        wrist_dets: list[Detection] | None = None,
+        wrist_shape: tuple[int, ...] | None = None,
+        dt: float = 1 / 30,
+        descend_hint: bool = False,
+    ) -> dict[str, float]:
         """이번 프레임에 보낼 팔 목표 자세를 돌려준다.
 
         aligned      : Approacher 가 ALIGNED 인지
         tracking_ok  : 큐브가 여전히 정렬 허용치 안에 있는지 (size_ok and center_ok)
         allow_motion : 일시정지/dry-run 이 아닌지
+        wrist_dets   : 손목 뷰 검출 (SERVO 단계에서 사용)
         """
         self.just_ready = False
+        self.grasp_just_ready = False
+        self.just_grasped = False
+        self.just_done = False
         if not self.enabled:
+            return self.current
+
+        if self.gave_up or self.state == "DONE":
+            return self.current
+
+        if self.state == "CARRY_HOME":
+            if self._interpolate(now) >= 1.0:
+                self.state = "DONE"
+                self.just_done = True
             return self.current
 
         if self.state == "HOME":
             if aligned and allow_motion:
-                self._start_move(self.pick, "TO_PICK", now)
+                # 새 pick 시도: 집기 재시도 카운터와 키워 둔 목표 크기를 원래대로
+                self.pick_attempts += 1
+                self.retries = 0
+                self.servo = None
+                self.grasp_cfg.target_size_px = self._base_target_size
+                self._start_move(self.pick, "TO_PICK", now, self.cfg.move_time_s)
         elif self.state in ("TO_PICK", "TO_HOME"):
-            a = min(1.0, (now - self._t0) / self.cfg.move_time_s)
-            self.progress = a
-            self.current = {k: self._from[k] + (self._to[k] - self._from[k]) * a for k in self.current}
-            if a >= 1.0:
+            if self._interpolate(now) >= 1.0:
                 if self.state == "TO_PICK":
                     self.state = "PICK"
                     self.drift = 0
                     self.just_ready = True
+                    self._pick_t = now
+                elif self._after_open == "HOME":
+                    # 포기 후 복귀: 잠깐 기다렸다가 다시 접근한다
+                    self._after_open = "SERVO"
+                    self._home_wait_t0 = now
+                    self.state = "HOME_WAIT"
                 else:
                     self.state = "HOME"
+        elif self.state == "HOME_WAIT":
+            if now - self._home_wait_t0 >= self.grasp_cfg.pick_retry_wait_s:
+                self.state = "HOME"
         elif self.state == "PICK":
-            if self.cfg.drift_frames > 0:
+            if self.grasp_enabled and allow_motion and now - self._pick_t >= self.grasp_cfg.pick_dwell_s:
+                # 다음 단계: 그리퍼를 최대로 연다 (정규화 100 = 캘리브레이션 range_max)
+                target = dict(self.current)
+                target[GRIPPER_JOINT] = self.grasp_cfg.gripper_open_pct
+                self._start_move(target, "OPEN_GRIPPER", now, self.grasp_cfg.gripper_open_time_s)
+            elif self.cfg.drift_frames > 0:
                 self.drift = 0 if tracking_ok else self.drift + 1
                 if self.drift >= self.cfg.drift_frames and allow_motion:
-                    self._start_move(self.home, "TO_HOME", now)
+                    self._start_move(self.home, "TO_HOME", now, self.cfg.move_time_s)
+        elif self.state == "OPEN_GRIPPER":
+            if self._interpolate(now) >= 1.0:
+                if self._after_open == "HOME":
+                    self._start_move(self.home, "TO_HOME", now, self.cfg.move_time_s)
+                elif self.servo is None:
+                    self.servo = WristServo(self.grasp_cfg, self.current, self.grasp_pose)
+                    self.state = "SERVO"
+                else:
+                    self.servo.resume()  # 재시도: 같은 자리에서 목표를 키워 이어간다
+                    self.state = "SERVO"
+        elif self.state == "SERVO":
+            if wrist_dets is not None and wrist_shape is not None:
+                self.current = self.servo.update(wrist_dets, wrist_shape, dt, now, allow_motion, descend_hint)
+                if self.servo.just_ready:
+                    self.state = "GRASP_READY"
+                    self.grasp_just_ready = True
+                    self._ready_t = now
+        elif self.state == "GRASP_READY":
+            # 집기: 잠깐 멈춘 뒤 그리퍼를 측정해 둔 값까지 닫는다
+            g = self.grasp_cfg
+            if g.close_after_ready and allow_motion and now - self._ready_t >= g.grasp_dwell_s:
+                target = dict(self.current)
+                target[GRIPPER_JOINT] = g.gripper_close_pct if g.gripper_close_pct is not None else g.resolve_close_pct()
+                self._start_move(target, "CLOSE_GRIPPER", now, g.gripper_close_time_s)
+        elif self.state == "CLOSE_GRIPPER":
+            if self._interpolate(now) >= 1.0:
+                self.state = "GRASPED"
+                self.just_grasped = True
+        # GRASPED: 그대로 유지 (큐브를 물고 있음)
         return self.current
 
     @property
     def label(self) -> str | None:
-        return {"TO_PICK": "ARM_TO_PICK", "PICK": "PICK_READY", "TO_HOME": "ARM_TO_HOME"}.get(self.state)
+        if self.gave_up:
+            return "GIVE_UP"
+        if self.state == "SERVO" and self.servo is not None:
+            return {
+                "CENTERING": "WRIST_CENTERING",
+                "APPROACHING": "WRIST_APPROACH",
+                "LOST": "WRIST_LOST",
+                "REFINING": "WRIST_REFINE",
+                "READY": "GRASP_READY",
+            }.get(self.servo.state)
+        return {
+            "TO_PICK": "ARM_TO_PICK",
+            "PICK": "PICK_READY",
+            "TO_HOME": "ARM_TO_HOME",
+            "OPEN_GRIPPER": "GRIPPER_OPEN",
+            "GRASP_READY": "GRASP_READY",
+            "CLOSE_GRIPPER": "GRIPPER_CLOSE",
+            "GRASPED": "GRASPED",
+            "HOME_WAIT": "HOME_WAIT",
+            "CARRY_HOME": "CARRY_HOME",
+            "DONE": "DONE",
+        }.get(self.state)
+
+
+def draw_wrist_servo(frame_bgr: np.ndarray, arm: ArmSequencer, state_label: str) -> np.ndarray:
+    """손목 뷰 오버레이: 화면 중앙점, 목표 박스, 목표 크기 참조, 서보 상태."""
+    canvas = frame_bgr
+    h, w = canvas.shape[:2]
+    cx0, cy0 = w // 2, h // 2
+    servo = arm.servo
+    active = arm.state in ("SERVO", "GRASP_READY") and servo is not None
+
+    # 화면 중앙점: 서보 중엔 박스 안/밖에 따라 초록/빨강, 아니면 흰색
+    if active and servo.target is not None:
+        color = (0, 220, 0) if servo.inside else (0, 0, 255)
+    else:
+        color = (255, 255, 255)
+    cv2.circle(canvas, (cx0, cy0), 7, color, 2, cv2.LINE_AA)
+    cv2.circle(canvas, (cx0, cy0), 2, color, -1, cv2.LINE_AA)
+
+    if active and servo.target is not None:
+        x1, y1, x2, y2 = servo.target.xyxy
+        bx, by = servo.target.center
+        cv2.rectangle(canvas, (x1, y1), (x2, y2), TARGET_COLOR, 3)
+        # 세로선에 맞추는 기준 변(왼쪽/오른쪽) 또는 중심선을 두껍게 표시하고, 맞지 않으면 화살표
+        ax, ay = servo.anchor_x, servo.anchor_y
+        edge_color = (0, 220, 0) if servo.x_ok else TARGET_COLOR
+        cv2.line(canvas, (ax, y1 - 8), (ax, y2 + 8), edge_color, 4)
+        if servo.cfg.y_anchor != "inside":
+            # 세로 기준(위 변/중심)도 두껍게
+            cv2.line(canvas, (x1 - 8, ay), (x2 + 8, ay), (0, 220, 0) if servo.y_ok else TARGET_COLOR, 4)
+        # 참조 목표점(노란 십자): 기준점이 여기 와야 한다
+        tx, ty = cx0 + servo.cfg.x_target_dx, cy0 + (servo.cfg.y_target_dy if servo.cfg.y_anchor != "inside" else 0)
+        cv2.drawMarker(canvas, (tx, ty), SIZE_REF_COLOR, cv2.MARKER_CROSS, 24, 2, cv2.LINE_AA)
+        if not (servo.x_ok and servo.y_ok):
+            cv2.arrowedLine(canvas, (tx, ty), (ax, ay if servo.cfg.y_anchor != "inside" else by), TARGET_COLOR, 2, tipLength=0.2)
+        # 목표 크기 참조(노랑): 박스 중심에 target_size 정사각형
+        ts = servo.cfg.target_size_px
+        cv2.rectangle(canvas, (bx - ts // 2, by - ts // 2), (bx + ts // 2, by + ts // 2), SIZE_REF_COLOR, 1, cv2.LINE_AA)
+        info = (
+            f"{servo.cfg.size_metric}={servo.size}/{ts}px  dx={servo.dx:+d} dy={servo.dy:+d}  "
+            f"{servo.cfg.x_anchor}-x {'OK' if servo.x_ok else '..'} y {'OK' if servo.y_ok else '..'}"
+        )
+        # 검출 라벨(박스 위)과 겹치지 않게 박스 아래에, 화면 아래로 나가면 박스 위 라벨보다 더 위에
+        ty = y2 + 22 if y2 + 22 < h - 30 else max(y1 - 30, 40)
+        cv2.putText(canvas, info, (x1, ty), cv2.FONT_HERSHEY_SIMPLEX, 0.55, TARGET_COLOR, 2, cv2.LINE_AA)
+
+    if arm.state in ("OPEN_GRIPPER", "SERVO", "GRASP_READY", "CLOSE_GRIPPER", "GRASPED", "CARRY_HOME", "DONE"):
+        col = STATE_COLORS.get(state_label, (255, 255, 255))
+        if arm.state in ("OPEN_GRIPPER", "CLOSE_GRIPPER", "CARRY_HOME"):
+            txt = f"{state_label}  {arm.progress * 100:3.0f}%  gripper {arm.current.get(GRIPPER_JOINT, 0):.0f}%"
+        elif arm.state in ("GRASPED", "DONE"):
+            txt = f"{state_label}  gripper {arm.current.get(GRIPPER_JOINT, 0):.1f}%"
+        else:
+            txt = (
+                f"{state_label}  reach {servo.progress_pct:3.0f}%  "
+                f"pan{servo.pan_delta:+.1f} tilt{servo.tilt_delta:+.1f} deg"
+            )
+        cv2.rectangle(canvas, (0, h - 26), (w, h), (0, 0, 0), -1)
+        cv2.putText(canvas, txt, (6, h - 8), cv2.FONT_HERSHEY_SIMPLEX, 0.6, col, 2, cv2.LINE_AA)
+    return canvas
 
 
 def control_loop(
@@ -621,11 +911,13 @@ def control_loop(
     views: list[str],
     arm_hold: dict,
     pick_pose: dict[str, float] | None,
+    grasp_pose: dict[str, float] | None,
     cfg: LeKiwiPickConfig,
 ) -> None:
     window = "LeKiwi YOLO pick (SPACE 일시정지, Q/ESC 종료)"
     ap = Approacher(cfg.approach)
-    arm = ArmSequencer(arm_hold, pick_pose, cfg.pick)
+    arm = ArmSequencer(arm_hold, pick_pose, cfg.pick, cfg.grasp, grasp_pose)
+    checker = GraspChecker(cfg.check)
     interval = 1.0 / cfg.fps
     start = time.perf_counter()
     paused = cfg.start_paused
@@ -646,11 +938,38 @@ def control_loop(
             continue
 
         dets_by_view = infer(model, cfg.yolo, frames_bgr)
+        # 손목 뷰: 왼쪽(그리퍼) 쪽은 conf 를 빡빡하게, 그리고 가장 큰 박스 하나만 (표시·서보 모두 이 결과 사용)
+        if cfg.grasp.enabled and cfg.grasp.view in frames_bgr and cfg.grasp.view != cfg.approach.view:
+            dets_by_view[cfg.grasp.view] = filter_wrist_dets(
+                dets_by_view.get(cfg.grasp.view, []), frames_bgr[cfg.grasp.view].shape, cfg.grasp
+            )
         cmd = ap.update(dets_by_view[cfg.approach.view], frames_bgr[cfg.approach.view].shape, loop_start)
 
         allow_motion = not paused and not cfg.dry_run
         tracking_ok = ap.target is not None and ap.size_ok and ap.center_ok
-        arm_pose = arm.update(ap.done, tracking_ok, allow_motion, loop_start)
+        wrist_frame = frames_bgr.get(cfg.grasp.view)
+        # 높이 힌트: front 정중앙 창에 보라색(그리퍼)이 보이면 알맞게 내려온 것 (서보 중에만 계산)
+        front_hint_ratio = 0.0
+        if cfg.grasp.front_hint and arm.state == "SERVO" and cfg.approach.view in frames_bgr:
+            front_hint_ratio = center_purple_ratio(frames_bgr[cfg.approach.view], cfg.check, cfg.grasp.front_hint_win_px)
+        descend_hint = front_hint_ratio >= cfg.grasp.front_hint_min_ratio
+        arm_pose = arm.update(
+            ap.done,
+            tracking_ok,
+            allow_motion,
+            loop_start,
+            wrist_dets=dets_by_view.get(cfg.grasp.view) if wrist_frame is not None else None,
+            wrist_shape=wrist_frame.shape if wrist_frame is not None else None,
+            dt=(1.0 / hz) if hz > 0 else interval,
+            descend_hint=descend_hint,
+        )
+
+        # 집기 판별: 그리퍼가 다 닫힌(GRASPED) 뒤부터 두 뷰의 박스 좌/우에 보라색 그리퍼가 있는지 본다
+        if cfg.check.enabled and arm.grasp_enabled and arm.state == "GRASPED":
+            if checker.state == "IDLE":
+                checker.start(loop_start)
+            checker.update(frames_bgr, dets_by_view, loop_start)
+        check_label = {"CHECKING": "GRASP_CHECK", "SUCCESS": "GRASP_OK", "FAIL": "GRASP_FAIL"}.get(checker.state)
 
         if paused:
             state_label = "PAUSED"
@@ -660,7 +979,7 @@ def control_loop(
             sent = dict(STOP)
         elif arm.base_locked:
             # 팔이 움직이는 중이거나 pick 자세 → 바퀴 고정
-            state_label = arm.label or ap.state
+            state_label = check_label or arm.label or ap.state
             sent = dict(STOP)
         else:
             state_label = ap.state
@@ -673,6 +992,67 @@ def control_loop(
             if cfg.pick.exit_when_ready:
                 print("--pick.exit_when_ready=true 이므로 종료합니다. 팔은 pick 자세로 남습니다.")
                 return
+        if arm.grasp_just_ready and arm.servo is not None:
+            print(
+                f"\n집기 준비 완료: 손목 뷰 {cfg.grasp.size_metric}={arm.servo.size}px, "
+                f"dx={arm.servo.dx:+d} dy={arm.servo.dy:+d}, reach {arm.servo.progress_pct:.0f}%, "
+                f"보정 pan {arm.servo.pan_delta:+.1f} / tilt {arm.servo.tilt_delta:+.1f} deg"
+                + (
+                    f"  (가로/세로가 허용치 밖이지만 {cfg.grasp.refine_timeout_s}s 지나 그대로 진행)"
+                    if arm.servo.ready_forced
+                    else "  (front 정중앙 보라색 힌트로 높이 확정)"
+                    if arm.servo.ready_by_hint
+                    else ""
+                )
+                + (f"  [재시도 {arm.retries}]" if arm.retries else "")
+            )
+            if cfg.grasp.exit_when_ready:
+                print("--grasp.exit_when_ready=true 이므로 종료합니다. 팔은 그 자세로 남습니다.")
+                return
+        if arm.just_grasped:
+            print(f"\n집기 완료: 그리퍼 {arm.current.get(GRIPPER_JOINT, float('nan')):.1f}% 로 닫힘. 자세를 유지합니다.")
+            if cfg.grasp.exit_when_grasped:
+                print("--grasp.exit_when_grasped=true 이므로 종료합니다. 팔은 큐브를 문 채 남습니다.")
+                return
+        if checker.just_decided:
+            verdict = "제대로 집었습니다 ✓" if checker.state == "SUCCESS" else "집기 실패로 판정 ✗ (양쪽 뷰에서 박스 좌/우에 그리퍼가 안 보임)"
+            print(f"\n집기 판별: {verdict}  [{checker.summary()}]")
+            if checker.state == "FAIL" and allow_motion and arm.can_retry:
+                # 집기 재시도: 그리퍼를 다시 벌리고, 손목 뷰 박스가 더 커지도록(더 가까이) 내려가 다시 집는다
+                arm.retry(loop_start)
+                checker.reset()
+                print(
+                    f"집기 재시도 {arm.retries}/{cfg.grasp.max_retries} (pick 시도 {arm.pick_attempts}/{cfg.grasp.max_pick_attempts}): "
+                    f"그리퍼를 벌리고 목표 폭을 {cfg.grasp.target_size_px + cfg.grasp.retry_size_step_px}px 로 키워 더 내려갑니다."
+                )
+            elif checker.state == "FAIL" and allow_motion and arm.can_restart_pick:
+                # 집기 재시도를 다 썼다 → 시작 자세로 돌아가 잠깐 기다린 뒤 접근부터 다시
+                arm.restart_pick(loop_start)
+                checker.reset()
+                print(
+                    f"집기 재시도 {cfg.grasp.max_retries}회 모두 실패. 그리퍼를 벌리고 시작 자세로 돌아가 "
+                    f"{cfg.grasp.pick_retry_wait_s}s 뒤 다시 접근합니다 (pick 시도 {arm.pick_attempts + 1}/{cfg.grasp.max_pick_attempts})."
+                )
+            elif cfg.check.exit_on_result:
+                print("--check.exit_on_result=true 이므로 종료합니다.")
+                return
+            elif checker.state == "FAIL":
+                arm.give_up()
+                print(
+                    f"pick 시도 {cfg.grasp.max_pick_attempts}회 × 집기 재시도 {cfg.grasp.max_retries}회 모두 실패. "
+                    "그 자리에서 멈춥니다 (SPACE/ESC 로 처리하세요)."
+                )
+        # 집기 성공 → 큐브를 문 채 시작 자세로 (일시정지 중이면 풀릴 때 시작)
+        if checker.state == "SUCCESS" and arm.state == "GRASPED" and cfg.grasp.return_home_when_grasped and allow_motion:
+            arm.carry_home(loop_start)
+            print(f"큐브를 문 채 {cfg.grasp.carry_time_s}s 동안 시작 자세로 돌아갑니다.")
+        if arm.just_done:
+            print(f"\n=== TASK 완료: 큐브를 집어 시작 자세로 돌아왔습니다 (pick 시도 {arm.pick_attempts}, 집기 재시도 {arm.retries}) ===")
+            if cfg.grasp.exit_when_done:
+                print("--grasp.exit_when_done=true 이므로 종료합니다. 팔은 큐브를 문 채 시작 자세로 남습니다.")
+                return
+        if arm.state not in ("GRASPED", "CARRY_HOME", "DONE") and checker.state != "IDLE":
+            checker.reset()  # 새 시도로 넘어갔으면 판별기도 초기화
 
         if cfg.display == "cv2":
             panels = []
@@ -682,6 +1062,17 @@ def control_loop(
                 img = draw(frames_bgr[v], v, dets_by_view.get(v, []), hz, crosshair=v in cfg.crosshair_views)
                 if v == cfg.approach.view:
                     img = draw_alignment(img, ap, cmd, state_label)
+                    if cfg.grasp.front_hint and arm.state in ("SERVO", "GRASP_READY"):
+                        # 높이 힌트 창: 보라색 비율이 문턱 이상이면 초록, 아니면 노랑
+                        hh, ww = img.shape[:2]
+                        r = cfg.grasp.front_hint_win_px // 2
+                        hc = (0, 220, 0) if descend_hint else (0, 200, 255)
+                        cv2.rectangle(img, (ww // 2 - r, hh // 2 - r), (ww // 2 + r, hh // 2 + r), hc, 2)
+                        cv2.putText(img, f"hint {front_hint_ratio:.2f}", (ww // 2 + r + 4, hh // 2 - r - 4), cv2.FONT_HERSHEY_SIMPLEX, 0.5, hc, 1, cv2.LINE_AA)
+                if v == cfg.grasp.view and arm.grasp_enabled:
+                    img = draw_wrist_servo(img, arm, state_label)
+                if cfg.check.enabled and v in (cfg.check.front_view, cfg.check.wrist_view):
+                    img = draw_grasp_check(img, checker, v)
                 panels.append(img)
             cv2.imshow(window, hstack_views(panels, cfg.view_height))
             key = cv2.waitKey(1) & 0xFF
@@ -691,6 +1082,18 @@ def control_loop(
             if key == ord(" "):
                 paused = not paused
                 print("\n일시정지" if paused else "\n재개")
+            if key == ord("s") and cfg.grasp.enabled:
+                # 지금 손목 뷰의 박스-화면중심 관계를 '집기 직전 참조'로 저장 (다음 실행부터 이 구성을 재현)
+                wdets = dets_by_view.get(cfg.grasp.view) or []
+                if wrist_frame is None or not wdets:
+                    print("\n[S] 손목 뷰에 검출이 없어 참조를 저장하지 않았습니다.")
+                else:
+                    ref = save_reference(cfg.grasp.ref_file, wrist_largest(wdets), wrist_frame.shape, cfg.grasp)
+                    print(
+                        f"\n[S] 집기 참조 저장: {cfg.grasp.ref_file}  "
+                        f"{ref['x_anchor']}-dx={ref['x_target_dx']:+d} {ref['y_anchor']}-dy={ref['y_target_dy']:+d} "
+                        f"{ref['size_metric']}={ref['target_size_px']}px  (다음 실행부터 적용)"
+                    )
             if cv2.getWindowProperty(window, cv2.WND_PROP_VISIBLE) < 1:
                 print("\n창이 닫혔습니다. 종료합니다...")
                 return
@@ -712,6 +1115,24 @@ def control_loop(
                 line += f"| arm {arm.state} {arm.progress * 100:3.0f}% "
             elif arm.state == "PICK":
                 line += f"| arm PICK drift {arm.drift}/{cfg.pick.drift_frames} "
+            elif arm.state == "OPEN_GRIPPER":
+                line += f"| gripper → {cfg.grasp.gripper_open_pct:.0f}% {arm.progress * 100:3.0f}% "
+            elif arm.state == "CLOSE_GRIPPER":
+                line += f"| gripper → {cfg.grasp.gripper_close_pct:.1f}% {arm.progress * 100:3.0f}% "
+            elif arm.state == "CARRY_HOME":
+                line += f"| 큐브 운반 → 시작 자세 {arm.progress * 100:3.0f}% "
+            elif arm.state == "DONE":
+                line += "| TASK DONE (큐브를 문 채 시작 자세) "
+            elif arm.state == "HOME_WAIT":
+                line += f"| 시작 자세 대기 {cfg.grasp.pick_retry_wait_s - (loop_start - arm._home_wait_t0):.1f}s 후 재접근 (pick {arm.pick_attempts}/{cfg.grasp.max_pick_attempts}) "
+            elif arm.state == "GRASPED":
+                line += f"| GRASPED gripper {arm.current.get(GRIPPER_JOINT, 0):.1f}% "
+                if checker.state != "IDLE":
+                    line += f"| check {checker.state} {checker.summary()} streak {checker.streak}/{cfg.check.confirm_frames} "
+            elif arm.state in ("SERVO", "GRASP_READY") and arm.servo is not None:
+                s = arm.servo
+                tgt = f"{s.cfg.size_metric}={s.size}/{s.cfg.target_size_px} {s.cfg.x_anchor}-dx={s.dx:+d}{'✓' if s.x_ok else ''} dy={s.dy:+d}{'✓' if s.y_ok else ''}" if s.target else "target -"
+                line += f"| wrist {s.state} {tgt} reach {s.progress_pct:3.0f}% pan{s.pan_delta:+.1f} tilt{s.tilt_delta:+.1f} "
             print(line, end="", flush=True)
 
         if cfg.run_time_s is not None and time.perf_counter() - start >= cfg.run_time_s:
@@ -769,6 +1190,13 @@ def main(cfg: LeKiwiPickConfig) -> None:
                 pick_pose = {k: v for k, v in pick_pose.items() if k in arm_hold}
             logging.info("pick 자세 (%s): %s", cfg.pick.pose_file, {k: round(v, 1) for k, v in pick_pose.items()})
 
+        grasp_pose = None
+        if cfg.pick.enabled and cfg.grasp.enabled and cfg.grasp.approach_mode == "pose":
+            grasp_pose = {
+                k: v for k, v in load_pose(Path(cfg.grasp.grasp_pose_file).expanduser()).items() if k in arm_hold
+            }
+            logging.info("grasp 자세 (%s): %s", cfg.grasp.grasp_pose_file, {k: round(v, 1) for k, v in grasp_pose.items()})
+
         a = cfg.approach
         mode = "DRY RUN (바퀴 명령 안 보냄)" if cfg.dry_run else "실제 주행"
         print(
@@ -779,13 +1207,32 @@ def main(cfg: LeKiwiPickConfig) -> None:
                 if cfg.pick.enabled
                 else "\n팔: 시작 자세 유지 (--pick.enabled=false)"
             )
+            + (
+                f"\n집기: pick 자세 {cfg.grasp.pick_dwell_s}s 후 그리퍼 {cfg.grasp.gripper_open_pct:.0f}% 열기 → "
+                f"손목 뷰({cfg.grasp.view}) 박스 {cfg.grasp.x_anchor} 변을 세로선에(±{cfg.grasp.x_tolerance_px}px) 맞추게 "
+                f"{cfg.grasp.pan_joint.removesuffix('.pos')}/"
+                f"{cfg.grasp.tilt_joint.removesuffix('.pos')} 보정 → "
+                + (
+                    f"grasp 자세({Path(cfg.grasp.grasp_pose_file).name}) 방향으로 뻗기"
+                    if cfg.grasp.approach_mode == "pose"
+                    else f"관절 속도 {cfg.grasp.reach_joints} 로 뻗기"
+                )
+                + f" → {cfg.grasp.size_metric} {cfg.grasp.target_size_px}px 에서 정지"
+                + (
+                    f" → 그리퍼 {cfg.grasp.gripper_close_pct:.1f}% 로 닫기"
+                    if cfg.grasp.close_after_ready and cfg.grasp.gripper_close_pct is not None
+                    else " (닫기 없음)"
+                )
+                if cfg.pick.enabled and cfg.grasp.enabled
+                else "\n집기: 없음 (--grasp.enabled=false)"
+            )
             + "\n조작: SPACE 일시정지/재개, Q/ESC 종료, Ctrl+C 종료\n"
         )
         if cfg.start_paused:
             print("일시정지 상태로 시작합니다. SPACE 를 누르면 움직입니다.")
 
         try:
-            control_loop(robot, model, views, arm_hold, pick_pose, cfg)
+            control_loop(robot, model, views, arm_hold, pick_pose, grasp_pose, cfg)
         except cv2.error as e:
             raise SystemExit(
                 f"error: OpenCV 창을 띄우지 못했습니다: {e}\n  헤드리스/SSH 환경이면 --display=none 을 쓰세요."
