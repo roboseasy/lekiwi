@@ -1,2 +1,13 @@
 # Model weights (too large for git)
 yolo_and_pick/weights/
+
+# Python cache
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Editor / OS
+.vscode/
+.idea/
+*.swp
+.DS_Store

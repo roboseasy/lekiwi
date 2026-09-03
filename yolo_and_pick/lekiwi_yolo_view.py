@@ -143,8 +143,8 @@ class LeKiwiYoloConfig:
     display: str = "cv2"
     # cv2 창에서 각 뷰의 표시 높이(px). 원본 비율은 유지한다.
     view_height: int = 480
-    # 가상의 중앙 가로선/세로선(초록)을 그릴 뷰. 끄려면 --crosshair_views='[]'
-    crosshair_views: list[str] = field(default_factory=lambda: ["front"])
+    # 가상의 중앙 가로선/세로선(초록)을 그릴 뷰. 끄려면 --crosshair_views='[]', front 만 보려면 --crosshair_views='[front]'
+    crosshair_views: list[str] = field(default_factory=lambda: ["front", "wrist"])
     display_ip: str | None = None
     display_port: int | None = None
 

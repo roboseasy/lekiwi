@@ -1,0 +1,13 @@
+{
+  "name": "pre_pick",
+  "saved_at": "2026-09-04 00:18:24",
+  "robot_id": "lekiwi01",
+  "pose": {
+    "arm_shoulder_pan.pos": -1.9340659340659339,
+    "arm_shoulder_lift.pos": 21.054945054945055,
+    "arm_elbow_flex.pos": 2.32967032967033,
+    "arm_wrist_flex.pos": 60.35164835164835,
+    "arm_wrist_roll.pos": -6.901098901098902,
+    "arm_gripper.pos": 3.4663178548070634
+  }
+}
