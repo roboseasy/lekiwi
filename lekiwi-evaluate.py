@@ -310,13 +310,21 @@ def check_policy_matches_robot(policy_cfg: PreTrainedConfig, ds_features: dict, 
             "  - 6차원이라면 팔만 학습한 정책입니다. LeKiwi 데이터셋(팔 6 + 베이스 3)으로 다시 학습하세요."
         )
 
+    # state 차원은 경고만 한다. 사전학습 체크포인트에서 이어 학습한 정책(SmolVLA 등)은
+    # config 의 input_features 가 베이스 모델 값 그대로 남아 있는 경우가 있는데
+    # (lerobot 의 factory.py 는 input_features 가 비어 있을 때만 데이터셋 값으로 덮어쓴다),
+    # 실제로는 state 를 내부에서 패딩해 쓰므로 차원이 달라도 정상 동작한다.
+    # 반면 action 차원은 그대로 로봇에 나가므로 위에서 에러로 막는다.
     state_ft = policy_cfg.input_features.get(OBS_STATE) if policy_cfg.input_features else None
     state_names = ds_features[OBS_STATE]["names"]
     if state_ft is not None and state_ft.shape[0] != len(state_names):
-        raise SystemExit(
-            f"error: 정책의 observation.state 차원({state_ft.shape[0]}) 이 LeKiwi 의 state 차원"
-            f"({len(state_names)}) 과 다릅니다.\n"
-            f"  LeKiwi state: {state_names}"
+        logging.warning(
+            "정책 config 의 observation.state 차원(%d) 이 LeKiwi 의 state 차원(%d) 과 다릅니다. "
+            "사전학습 체크포인트의 값이 남아 있는 경우라면 정상입니다 (정책이 내부에서 패딩). "
+            "LeKiwi state: %s",
+            state_ft.shape[0],
+            len(state_names),
+            state_names,
         )
 
     if rename_map:

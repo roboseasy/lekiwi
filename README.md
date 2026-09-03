@@ -14,6 +14,7 @@ lerobot 이 기본 제공하는 `lerobot-teleoperate` / `lerobot-record` / `lero
 | [lekiwi-record.py](lekiwi-record.py) | 조작하면서 LeRobotDataset 녹화 | `lerobot-record` 도 같은 이유로 teleop 하나만 받음 |
 | [lekiwi-replay.py](lekiwi-replay.py) | 녹화된 에피소드의 action 을 그대로 재생 | `lerobot-replay` 는 `lekiwi_client` 를 import 하지 않아 `--robot.type=lekiwi_client` 를 모르고, 중간에 멈출 방법도 없다 |
 | [lekiwi-rollout.py](lekiwi-rollout.py) | 학습한 정책으로 자율 실행 | `lerobot-rollout` 은 위와 같고, 더해서 `rollout/context.py` 가 `.pos` 만 남기고 **`.vel`(베이스 3채널)을 버린다** → 베이스가 아예 안 움직이고 채널 수도 어긋남 |
+| [lekiwi-inference.py](lekiwi-inference.py) | 정책을 **사람이 멈출 때까지** 계속 실행 (시연/수업용) | rollout 과 같은 이유. 시간 제한 대신 ESC 종료 + 시작 자세 복귀 |
 | [lekiwi-evaluate.py](lekiwi-evaluate.py) | N 에피소드 돌리고 성공률 · 지연 리포트 | `lerobot-eval` 은 gym 시뮬레이션 환경 전용. 실물에는 환경도 리워드도 없다 |
 
 
@@ -522,6 +523,7 @@ python lekiwi-rollout.py --policy.path=... --task="..." \
 | `--duration_s` | `None` | 이 시간(초) 뒤 자동 종료 |
 | `--device` | `None` | 추론 장치. `None` 이면 체크포인트 설정 → 자동 선택 |
 | `--warmup_s` | `2.0` | 첫 목표 자세까지 선형 보간 이동 시간 |
+| `--return_home_s` | `3.0` | **끝날 때 시작 자세로 되돌아가는** 시간. `0` 이면 그 자리에 멈춤 |
 | `--base_speed_scale` | `1.0` | 베이스 속도에 곱할 계수. 처음엔 `0.3` 권장 |
 | `--rename_map` | `{}` | 관측 키 이름 변환 |
 
@@ -540,6 +542,13 @@ ESC   : 종료 (Ctrl+C 도 됨)
 
 재개할 때는 정지 전에 만들어 둔 액션 청크를 버리고(`policy.reset()`) 지금 관측부터 다시 시작합니다.
 
+**시작/종료 자세**
+
+연결 직후(아무것도 움직이기 전) 팔 자세를 기억해 두고, 끝날 때 그 자세로 되돌아갑니다.
+ESC · `--duration_s` 만료 · Ctrl+C · 오류 — 어떤 경로로 끝나도 동일하게 동작합니다.
+순서는 **베이스 정지 → 팔 복귀(`--return_home_s` 초, 선형 보간) → 연결 해제** 이고,
+복귀 중에도 베이스는 멈춰 있습니다. 복귀를 원치 않으면 `--return_home_s=0`.
+
 **사전 검사** — 로봇을 움직이기 전에 다음을 확인하고, 안 맞으면 멈춥니다.
 
 - 정책의 action 차원 vs LeKiwi 의 9채널 (6차원이면 팔만 학습한 정책 → 다시 학습 필요)
@@ -548,7 +557,60 @@ ESC   : 종료 (Ctrl+C 도 됨)
 
 ---
 
-### 4.5 [lekiwi-evaluate.py](lekiwi-evaluate.py) — 정책 평가
+### 4.5 [lekiwi-inference.py](lekiwi-inference.py) — 무제한 추론
+
+[lekiwi-rollout.py](lekiwi-rollout.py) 와 같은 추론 루프지만 **끝나는 시점을 시간이 아니라
+사람이 정합니다.** 시연이나 수업처럼 "될 때까지 계속 돌려 두는" 용도입니다.
+설계는 physical-labs 앱의 추론 워커(`services/inference_worker.py`)를 따랐습니다.
+
+| | rollout | inference | evaluate |
+| --- | --- | --- | --- |
+| 종료 | `--duration_s` 또는 ESC | **ESC 만** | N 에피소드 |
+| 종료 후 | 시작 자세 복귀 (고정 시간) | **시작 자세 복귀 (이동량에 맞춘 시간)** | 그 자리에 정지 |
+| 용도 | 실험 · 디버깅 | 시연 · 수업 | 성능 측정 |
+
+```bash
+python lekiwi-inference.py \
+    --policy.path=outputs/train/${TASK_NAME}/checkpoints/last/pretrained_model \
+    --task="Pick up the cube and place it in the box" \
+    --base_speed_scale=0.3 \
+    --display_data=true
+```
+
+**rollout 과 다른 인자**
+
+| 인자 | 기본값 | 설명 |
+| --- | --- | --- |
+| `--duration_s` | — | **없습니다.** ESC 를 누를 때까지 계속 돌아갑니다 |
+| `--return_home` | `true` | ESC 로 끝낼 때 시작 자세로 복귀할지 |
+| `--return_home_deg_per_s` | `45.0` | 복귀 속도(도/초). 복귀 시간 = 이동량 ÷ 이 값, 0.5~5초로 제한 |
+
+`--policy.path`, `--task`, `--rename_map`, `--base_speed_scale`, `--warmup_s`, `--fps` 등
+나머지는 rollout 과 동일합니다.
+
+**조작키**
+
+```
+SPACE : 일시정지 / 재개
+ESC   : 종료 → 베이스 정지 → 시작 자세로 복귀 → 연결 해제
+        복귀 중에 ESC 를 한 번 더 누르면 복귀를 즉시 중단
+Ctrl+C: 비상 정지 (복귀 없이 그 자리에 멈춤)
+```
+
+**복귀 규칙** — 복귀도 사람이 루프 밖에 있는 자율 동작이라 안전 규칙을 둡니다.
+
+- 이동량에 맞춰 시간을 정하되 정책 추종보다 느리게 가고, 최대 5초를 넘지 않습니다
+  ("종료를 눌렀는데 안 멈춘다" 방지).
+- 매 스텝 ESC 를 확인합니다 — 한 번 더 누르면 즉시 멈춥니다.
+- 시작 자세와 0.5도 미만 차이면 아무것도 하지 않습니다.
+- **오류로 끝났거나 Ctrl+C 를 눌렀으면 복귀하지 않습니다** — 로봇 상태를 모르거나,
+  사람이 위험을 느껴 멈춘 것일 수 있기 때문입니다.
+
+베이스를 아예 굴리지 않고 팔만 쓰려면 `--base_speed_scale=0`.
+
+---
+
+### 4.6 [lekiwi-evaluate.py](lekiwi-evaluate.py) — 정책 평가
 
 에피소드/리셋 구간을 나눠 N 번 돌리고, 사람이 매번 성공/실패를 눌러 주면
 **성공률과 추론 지연 통계를 JSON 리포트**로 남깁니다.
@@ -633,6 +695,7 @@ JSON 에는 `policy_path`, `policy_type`, `task`, `tag`, `robot_id`, `fps`, `dev
                       --output_dir=outputs/train/<task> --job_name=<task> --policy.device=cuda
 5) 정책 확인      python lekiwi-rollout.py  --policy.path=outputs/train/<task>/checkpoints/last/pretrained_model --task="..."
 6) 정책 평가      python lekiwi-evaluate.py --policy.path=... --task="..." --eval.n_episodes=10
+7) 시연/수업      python lekiwi-inference.py --policy.path=... --task="..."   # ESC 까지 무제한
 ```
 
 4번 학습은 lerobot 이 제공하는 CLI 를 그대로 씁니다 (이 저장소에 스크립트 없음).

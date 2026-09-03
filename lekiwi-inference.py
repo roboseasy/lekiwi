@@ -1,15 +1,14 @@
-#!/usr/bin/env python
-r"""LeKiwi 정책 롤아웃 (학습된 policy 로 자율 주행/조작, 리더암 불필요).
+r"""LeKiwi 무제한 추론 (학습된 policy 를 사람이 멈출 때까지 계속 돌린다).
 
-`lerobot-rollout` 는 LeKiwi 에 쓸 수 없다. 두 가지 이유가 있다:
+`lekiwi-rollout.py` 와 같은 추론 루프지만, **끝나는 시점을 시간이 아니라 사람이 정한다**.
+시연이나 수업처럼 "될 때까지 계속 돌려 두는" 용도다.
 
-  1. `lekiwi_client` 를 import 하지 않아 `--robot.type=lekiwi_client` 를 알아보지 못한다.
-  2. 더 결정적으로, `rollout/context.py:284` 가
-     `action_features_hw = {k: v for k, v in robot.action_features.items() if k.endswith(".pos")}`
-     로 **`.vel` 액션을 버린다**. LeKiwi 의 action 은 팔 6채널(.pos) + 베이스 3채널(.vel) =
-     9차원인데, 6차원만 매핑되므로 베이스가 아예 움직이지 않고 정책 출력과 채널 수도 어긋난다.
+    rollout    - `--duration_s` 로 정해진 시간만 돌린다 (실험/디버깅용).
+    inference  - ESC 를 누를 때까지 무제한. 끝나면 시작 자세로 복귀한다.
+    evaluate   - N 에피소드를 돌리고 성공률 리포트를 남긴다.
 
-그래서 이 스크립트는 9채널을 그대로 쓰는 추론 루프를 직접 돈다.
+설계는 physical-labs 앱의 추론 워커(`services/inference_worker.py`)를 따랐다.
+특히 종료 후 시작 자세 복귀는 그쪽 `_roll_back_to_start` 와 같은 규칙이다.
 
 먼저 라즈베리파이(LeKiwi) 쪽에서 호스트를 띄워 둘 것:
 
@@ -23,48 +22,40 @@ r"""LeKiwi 정책 롤아웃 (학습된 policy 로 자율 주행/조작, 리더�
 
 그 다음 PC 에서:
 
-    HF_USER=your_hf_id
-    TASK_NAME=lekiwi_pick_cube
-
-    python lekiwi-rollout.py \
-        --policy.path=outputs/train/${TASK_NAME}/checkpoints/last/pretrained_model \
+    python lekiwi-inference.py \
+        --policy.path=outputs/train/my_task/checkpoints/last/pretrained_model \
         --task="Pick up the cube and place it in the box" \
-        --duration_s=60 \
+        --base_speed_scale=0.3 \
         --display_data=true
 
-허브에 올린 정책도 같은 방식으로 쓸 수 있다:
+카메라 이름이 학습 데이터셋과 다르면 --rename_map 으로 맞춘다 (SmolVLA 베이스 모델은
+camera1/camera2/camera3 을 기대한다):
 
-    python lekiwi-rollout.py \
-        --policy.path=${HF_USER}/${TASK_NAME}_act \
-        --task="Pick up the cube and place it in the box"
+    --rename_map='{"observation.images.front": "observation.images.camera1",
+                   "observation.images.wrist": "observation.images.camera2"}'
 
-처음 돌려보는 정책이라면 베이스를 천천히:
-
-    python lekiwi-rollout.py \
-        --policy.path=... --task="..." \
-        --base_speed_scale=0.3 \
-        --duration_s=30
-
-전체 옵션은 `python lekiwi-rollout.py --help`.
-
-카메라 이름이 학습 데이터셋과 다르면 --rename_map 으로 맞춘다:
-
-    --rename_map='{"observation.images.front": "observation.images.cam_high"}'
+전체 옵션은 `python lekiwi-inference.py --help`.
 
 조작키
     SPACE : 일시정지 / 재개 (정지 중에는 팔을 현재 자세로 고정하고 베이스를 멈춘다)
-    ESC   : 종료 (Ctrl+C 도 됨). 종료 시 베이스를 정지시키고 연결을 끊는다.
+    ESC   : 종료. 베이스를 세우고 시작 자세로 되돌아간 뒤 연결을 끊는다.
+            복귀 중에 ESC 를 한 번 더 누르면 복귀를 즉시 중단한다.
+    Ctrl+C: 비상 정지. 복귀하지 않고 그 자리에 멈춘 채 끝낸다.
 
 시작/종료 자세
-    - 연결 직후(아무것도 움직이기 전) 팔 자세를 기억해 두고, 끝날 때 그 자세로 되돌아간다.
-      ESC, `--duration_s` 만료, Ctrl+C, 오류 등 어떤 경로로 끝나도 동일하게 동작한다.
-    - 복귀에 쓸 시간은 `--return_home_s` (기본 3초). `--return_home_s=0` 이면 복귀하지 않고
-      그 자리에 멈춘 채 끝낸다.
-    - 복귀 중에도 베이스는 정지 상태이며, Ctrl+C 를 한 번 더 누르면 복귀만 중단하고 끝낸다.
+    - 연결 직후(아무것도 움직이기 전) 팔 자세를 기억해 두고, ESC 로 끝낼 때 그 자세로
+      되돌아간다. 복귀 시간은 이동량에 맞춰 정해진다
+      (`--return_home_deg_per_s` 기본 45도/초, 0.5~5초 사이로 제한).
+    - 복귀도 사람이 루프 밖에 있는 자율 동작이다. 그래서 정책 추종보다 느리게 가고,
+      매 스텝 ESC 를 확인하며, 최대 시간에 상한을 둔다.
+    - **오류로 끝난 경우와 Ctrl+C 는 복귀하지 않는다** — 로봇이 어떤 상태인지 모르거나,
+      사람이 위험을 느껴 멈춘 것일 수 있기 때문이다.
+    - 복귀 자체를 끄려면 `--return_home=false`.
 
 안전 주의
     - 정책은 학습 때 본 적 없는 상황에서 무엇이든 할 수 있다. 주변을 비우고, 손은
       SPACE/ESC 위에 두고, 처음에는 `--base_speed_scale` 을 낮춰서 시작할 것.
+    - 팔만 쓰고 베이스를 아예 굴리지 않으려면 `--base_speed_scale=0`.
     - 시작 시 팔이 첫 추론 결과로 튀는 것을 막기 위해 `--warmup_s` 초 동안 현재 자세에서
       첫 목표 자세까지 선형 보간으로 이동한다 (이 구간에서 베이스는 정지).
 """
@@ -100,6 +91,12 @@ from lerobot.utils.visualization_utils import (
 # 호스트의 send_action 은 x/y/theta.vel 이 반드시 있다고 가정한다 (robots/lekiwi/lekiwi.py:394).
 BASE_VEL_KEYS = ("x.vel", "y.vel", "theta.vel")
 STOP_BASE = dict.fromkeys(BASE_VEL_KEYS, 0.0)
+
+# 시작 자세 복귀에 쓰는 시간의 하한/상한(초). 상한은 "정지를 눌렀는데 안 멈춘다" 를 막는 안전장치다.
+RETURN_MIN_S = 0.5
+RETURN_MAX_S = 5.0
+# 이보다 적게 벗어나 있으면 이미 시작 자세로 보고 움직이지 않는다 (도).
+RETURN_SKIP_DEG = 0.5
 
 
 def default_cameras() -> dict[str, CameraConfig]:
@@ -138,7 +135,7 @@ class LeKiwiRobotArgs:
 
 
 @dataclass
-class LeKiwiRolloutConfig:
+class LeKiwiInferenceConfig:
     robot: LeKiwiRobotArgs = field(default_factory=LeKiwiRobotArgs)
     # `--policy.path=<허브 repo 또는 로컬 체크포인트>` 로 지정한다. `--policy.<필드>=값` 으로
     # 체크포인트의 설정을 덮어쓸 수도 있다 (예: --policy.n_action_steps=50).
@@ -149,15 +146,16 @@ class LeKiwiRolloutConfig:
     task: str = ""
 
     fps: int = 30
-    # 이 시간(초)이 지나면 자동 종료. None 이면 ESC/Ctrl+C 까지 계속.
-    duration_s: float | None = None
     # 추론 장치. None 이면 체크포인트 설정 → 자동 선택 순으로 정한다.
     device: str | None = None
 
     # 첫 목표 자세까지 부드럽게 이동하는 데 쓸 시간(초). 0 이면 곧바로 첫 추론 결과를 보낸다.
     warmup_s: float = 2.0
-    # 끝날 때 시작 자세로 돌아가는 데 쓸 시간(초). 0 이면 그 자리에 멈춘 채 끝낸다.
-    return_home_s: float = 3.0
+    # ESC 로 끝낼 때 시작 자세로 되돌아갈지 여부.
+    return_home: bool = True
+    # 복귀 속도(도/초). 사람이 보고 반응할 수 있어야 하므로 정책 추종보다 느리게 잡는다.
+    # 실제 복귀 시간은 이동량 / 이 값이며 RETURN_MIN_S ~ RETURN_MAX_S 로 제한된다.
+    return_home_deg_per_s: float = 45.0
     # 베이스 속도(.vel)에 곱할 계수. 처음 돌려보는 정책은 0.3 정도로 낮춰서 시작할 것.
     base_speed_scale: float = 1.0
 
@@ -207,8 +205,10 @@ class LeKiwiRolloutConfig:
             errors.append(f"--fps 는 1 이상이어야 합니다 (받은 값: {self.fps})")
         if self.base_speed_scale < 0:
             errors.append(f"--base_speed_scale 은 0 이상이어야 합니다 (받은 값: {self.base_speed_scale})")
-        if self.return_home_s < 0:
-            errors.append(f"--return_home_s 는 0 이상이어야 합니다 (받은 값: {self.return_home_s})")
+        if self.return_home_deg_per_s <= 0:
+            errors.append(
+                f"--return_home_deg_per_s 는 0 보다 커야 합니다 (받은 값: {self.return_home_deg_per_s})"
+            )
         if errors:
             raise SystemExit("\n".join(f"error: {e}" for e in errors))
 
@@ -352,7 +352,7 @@ class LeKiwiPolicy:
     (팔 6 x .pos + 베이스 3 x .vel) 을 그대로 유지한다.
     """
 
-    def __init__(self, cfg: LeKiwiRolloutConfig, robot: LeKiwiClient, ds_features: dict):
+    def __init__(self, cfg: LeKiwiInferenceConfig, robot: LeKiwiClient, ds_features: dict):
         self.cfg = cfg
         self.ds_features = ds_features
         self.device = torch.device(cfg.device)
@@ -411,20 +411,29 @@ class LeKiwiPolicy:
 
 
 def make_control_listener():
-    """SPACE(일시정지/재개), ESC(종료) 를 받는 리스너를 띄운다.
+    """SPACE(일시정지/재개), ESC(종료/복귀 중단) 를 받는 리스너를 띄운다.
 
-    반환: (listener, state) — state["quit"], state["paused"]
+    반환: (listener, state)
+        state["quit"]         - ESC 한 번. 추론 루프 종료
+        state["abort_return"] - 종료 후 복귀 중에 누른 ESC. 복귀 즉시 중단
+        state["paused"]       - SPACE 토글
+        state["resumed"]      - 재개 직후 한 번만 True (정책 상태를 비우는 신호)
 
-    정책 롤아웃에는 연속 입력(주행키)이 필요 없고 discrete 한 제어키만 있으면 되므로,
+    무제한 추론에는 연속 입력(주행키)이 필요 없고 discrete 한 제어키만 있으면 되므로,
     pynput 없이도 되는 TerminalKeyListener 하나만 쓴다 (이 터미널 창이 포커스 필요).
     """
-    state = {"quit": False, "paused": False, "resumed": False}
+    state = {"quit": False, "abort_return": False, "paused": False, "resumed": False}
 
     def dispatch(name: str) -> None:
         key = name.lower()
         if key == "esc":
-            print("\nESC, 종료합니다...")
-            state["quit"] = True
+            if state["quit"]:
+                # 이미 종료 중이다 = 지금은 복귀 구간. 한 번 더 누르면 복귀를 멈춘다.
+                state["abort_return"] = True
+                print("\n복귀를 중단합니다...")
+            else:
+                print("\nESC, 종료합니다...")
+                state["quit"] = True
         elif key == "space":
             state["paused"] = not state["paused"]
             if state["paused"]:
@@ -476,32 +485,55 @@ def read_arm_pose(robot: LeKiwiClient) -> dict[str, float]:
     return {k: float(v) for k, v in robot.get_observation().items() if k.endswith(".pos")}
 
 
-def return_home(robot: LeKiwiClient, home: dict[str, float], return_home_s: float, fps: int) -> None:
+def return_home(
+    robot: LeKiwiClient, home: dict[str, float], cfg: LeKiwiInferenceConfig, state: dict | None
+) -> None:
     """시작할 때 기억해 둔 자세로 천천히 되돌아간다 (베이스는 정지).
 
-    종료 경로에서 호출되므로 state["quit"] 를 보지 않는다 (ESC 로 끝낸 경우에도 돌아가야 한다).
-    Ctrl+C 를 한 번 더 누르면 중간에 끊기는데, 그때도 베이스는 정지 상태다.
+    복귀도 사람이 루프 밖에 있는 자율 동작이라, physical-labs 앱의 `_roll_back_to_start`
+    와 같은 안전 규칙을 따른다:
+
+      - 이동량에 맞춰 시간을 정하되(`--return_home_deg_per_s`), 정책 추종보다 느리게 간다.
+      - `RETURN_MAX_S` 상한을 둔다 ("종료를 눌렀는데 안 멈춘다" 방지).
+      - 매 스텝 ESC(state["abort_return"]) 를 확인해 즉시 멈출 수 있게 한다.
+      - 이미 시작 자세 근처면(`RETURN_SKIP_DEG`) 아무것도 하지 않는다.
+
+    종료 경로에서 불리므로 state["quit"] 는 보지 않는다 (ESC 로 끝낸 경우가 곧 복귀 대상이다).
     """
-    if return_home_s <= 0 or not home:
+    if not cfg.return_home or not home:
         return
 
-    start = read_arm_pose(robot)
-    start = {k: v for k, v in start.items() if k in home}
-    if not start:
+    current = {k: v for k, v in read_arm_pose(robot).items() if k in home}
+    if not current:
         logging.warning("현재 팔 자세를 읽지 못해 시작 자세 복귀를 건너뜁니다.")
         return
 
-    steps = max(int(return_home_s * fps), 1)
-    logging.info("시작 자세로 %.1f 초 동안 되돌아갑니다...", return_home_s)
+    max_delta = max(abs(home[k] - v) for k, v in current.items())
+    if max_delta < RETURN_SKIP_DEG:
+        logging.info("이미 시작 자세입니다 (최대 편차 %.2f도). 복귀를 건너뜁니다.", max_delta)
+        return
+
+    duration_s = min(RETURN_MAX_S, max(RETURN_MIN_S, max_delta / cfg.return_home_deg_per_s))
+    steps = max(int(duration_s * cfg.fps), 1)
+    logging.info(
+        "시작 자세로 되돌아갑니다 (최대 편차 %.1f도, %.1f초). 중단하려면 ESC.", max_delta, duration_s
+    )
     for step in range(1, steps + 1):
+        if state is not None and state["abort_return"]:
+            logging.info("복귀 중단 (%d/%d 스텝).", step, steps)
+            return
         loop_start = time.perf_counter()
         alpha = step / steps
-        action = {k: (1.0 - alpha) * v + alpha * float(home[k]) for k, v in start.items()}
+        action = {k: (1.0 - alpha) * v + alpha * float(home[k]) for k, v in current.items()}
         robot.send_action({**action, **STOP_BASE})
-        precise_sleep(max(1 / fps - (time.perf_counter() - loop_start), 0.0))
+        precise_sleep(max(1 / cfg.fps - (time.perf_counter() - loop_start), 0.0))
+    logging.info("시작 자세 복귀 완료.")
 
 
-def rollout_loop(robot: LeKiwiClient, policy: LeKiwiPolicy, state: dict, cfg: LeKiwiRolloutConfig) -> None:
+def inference_loop(
+    robot: LeKiwiClient, policy: LeKiwiPolicy, state: dict, cfg: LeKiwiInferenceConfig
+) -> None:
+    """ESC 를 누를 때까지 계속 추론한다. 끝나는 조건은 시간이 아니라 사람이다."""
     control_interval = 1.0 / cfg.fps
     start = time.perf_counter()
     steps = 0
@@ -535,24 +567,24 @@ def rollout_loop(robot: LeKiwiClient, policy: LeKiwiPolicy, state: dict, cfg: Le
 
         if cfg.print_status:
             loop_s = time.perf_counter() - loop_start
+            elapsed = time.perf_counter() - start
             tag = "PAUSED" if state["paused"] else "  RUN "
             print(
-                f"\r[{tag}] x={action['x.vel']:+.2f} y={action['y.vel']:+.2f} "
+                f"\r[{tag}] {int(elapsed) // 60:02d}:{int(elapsed) % 60:02d} "
+                f"x={action['x.vel']:+.2f} y={action['y.vel']:+.2f} "
                 f"theta={action['theta.vel']:+6.1f} | 추론 {policy.last_inference_s * 1000:5.1f} ms "
                 f"| {1 / loop_s:5.1f} Hz   ",
                 end="",
                 flush=True,
             )
 
-        if cfg.duration_s is not None and time.perf_counter() - start >= cfg.duration_s:
-            print(f"\n--duration_s={cfg.duration_s} 경과, 종료합니다.")
-            break
-
-    logging.info("정책이 %d 스텝 실행되었습니다.", steps)
+    elapsed = time.perf_counter() - start
+    print()
+    logging.info("정책이 %d 스텝, %.1f 초 동안 실행되었습니다.", steps, elapsed)
 
 
 @parser.wrap()
-def rollout(cfg: LeKiwiRolloutConfig) -> None:
+def inference(cfg: LeKiwiInferenceConfig) -> None:
     init_logging()
     cfg.validate()
     logging.info(pformat(cfg))
@@ -561,8 +593,11 @@ def rollout(cfg: LeKiwiRolloutConfig) -> None:
     teleop_action_processor, _, robot_observation_processor = make_default_processors()
 
     listener = None
-    # 아무것도 움직이기 전의 팔 자세. 끝날 때 여기로 되돌아간다.
+    state = None
+    # 아무것도 움직이기 전의 팔 자세. ESC 로 끝낼 때 여기로 되돌아간다.
     home_pose: dict[str, float] = {}
+    # 정상 종료(ESC)로 빠져나왔는지. 오류/Ctrl+C 경로에서는 복귀하지 않는다.
+    clean_stop = False
 
     try:
         logging.info(
@@ -597,12 +632,13 @@ def rollout(cfg: LeKiwiRolloutConfig) -> None:
 
         if cfg.display_data:
             init_visualization(
-                cfg.display_mode, session_name="lekiwi_rollout", ip=cfg.display_ip, port=cfg.display_port
+                cfg.display_mode, session_name="lekiwi_inference", ip=cfg.display_ip, port=cfg.display_port
             )
 
         listener, state = make_control_listener()
         print(
-            "\n조작키 | SPACE 일시정지/재개, ESC 종료"
+            "\n조작키 | SPACE 일시정지/재개, ESC 종료(→ 시작 자세로 복귀)"
+            "\n       | 복귀 중 ESC 한 번 더 = 복귀 중단, Ctrl+C = 비상 정지(복귀 없음)"
             "\n       | (이 터미널 창이 포커스를 갖고 있어야 키가 들어옵니다)\n"
         )
 
@@ -613,9 +649,11 @@ def rollout(cfg: LeKiwiRolloutConfig) -> None:
 
         if not state["quit"]:
             log_say("Running policy", cfg.play_sounds, blocking=True)
-            rollout_loop(robot, policy, state, cfg)
+            inference_loop(robot, policy, state, cfg)
+        # 여기까지 왔으면 ESC 로 끝난 정상 경로다 (오류는 예외로 빠진다).
+        clean_stop = True
     except KeyboardInterrupt:
-        print("\nCtrl+C, 종료합니다...")
+        print("\nCtrl+C, 비상 정지합니다 (시작 자세 복귀 없음)...")
     finally:
         # 먼저 베이스를 세우고(즉시 안전 확보), 팔을 시작 자세로 되돌린 뒤 연결을 끊는다.
         if robot.is_connected:
@@ -624,15 +662,16 @@ def rollout(cfg: LeKiwiRolloutConfig) -> None:
                 time.sleep(0.2)
             except Exception as e:
                 logging.warning("정지 명령 전송 실패: %s", e)
-            try:
-                return_home(robot, home_pose, cfg.return_home_s, cfg.fps)
-                # 복귀 직후 팔이 튀지 않게 마지막 자세를 그대로 목표로 한 번 더 보낸다.
-                hold_still(robot, robot.get_observation())
-                time.sleep(0.2)
-            except KeyboardInterrupt:
-                print("\n시작 자세 복귀를 중단했습니다.")
-            except Exception as e:
-                logging.warning("시작 자세 복귀 실패: %s", e)
+            if clean_stop:
+                try:
+                    return_home(robot, home_pose, cfg, state)
+                    # 복귀 직후 팔이 튀지 않게 마지막 자세를 그대로 목표로 한 번 더 보낸다.
+                    hold_still(robot, robot.get_observation())
+                    time.sleep(0.2)
+                except KeyboardInterrupt:
+                    print("\n시작 자세 복귀를 중단했습니다.")
+                except Exception as e:
+                    logging.warning("시작 자세 복귀 실패: %s", e)
             robot.disconnect()
         if listener is not None:
             listener.stop()
@@ -642,4 +681,4 @@ def rollout(cfg: LeKiwiRolloutConfig) -> None:
 
 
 if __name__ == "__main__":
-    rollout()
+    inference()
