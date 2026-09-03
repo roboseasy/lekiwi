@@ -17,6 +17,10 @@ lerobot 이 기본 제공하는 `lerobot-teleoperate` / `lerobot-record` / `lero
 | [lekiwi-inference.py](lekiwi-inference.py) | 정책을 **사람이 멈출 때까지** 계속 실행 (시연/수업용) | rollout 과 같은 이유. 시간 제한 대신 ESC 종료 + 시작 자세 복귀 |
 | [lekiwi-evaluate.py](lekiwi-evaluate.py) | N 에피소드 돌리고 성공률 · 지연 리포트 | `lerobot-eval` 은 gym 시뮬레이션 환경 전용. 실물에는 환경도 리워드도 없다 |
 
+> **별도 과제 — 학습 없이 규칙으로 큐브 집기:** YOLO 로 빨간 큐브를 찾아 다가가고, 손목 카메라를 보며 집고,
+> 색으로 성공을 판별해 재시도까지 하는 파이프라인은 [`yolo_and_pick/`](yolo_and_pick/) 에 따로 있습니다.
+> → **[Lekiwi YOLO+GRIP 설명서](yolo_and_pick/README.md)** (설치 · 실행 순서 · 상태 흐름 · 튜닝)
+
 
 ### 목차
 
@@ -27,6 +31,7 @@ lerobot 이 기본 제공하는 `lerobot-teleoperate` / `lerobot-record` / `lero
 5. [전체 워크플로](#5-전체-워크플로)
 6. [공통 설계](#6-공통-설계)
 7. [문제 해결](#7-문제-해결)
+8. [Lekiwi YOLO+GRIP 설명서](yolo_and_pick/README.md) — 규칙 기반 큐브 집기 (별도 문서)
 
 ### 한눈에 보는 빠른 시작
 
@@ -699,6 +704,19 @@ JSON 에는 `policy_path`, `policy_type`, `task`, `tag`, `robot_id`, `fps`, `dev
 ```
 
 4번 학습은 lerobot 이 제공하는 CLI 를 그대로 씁니다 (이 저장소에 스크립트 없음).
+
+학습 없이 규칙만으로 큐브를 집는 별도 경로도 있습니다 (같은 호스트, 같은 `--robot.*` 인자):
+
+```
+0') 호스트 실행       (라즈베리파이) 위와 동일
+A) 모델 받기          cd yolo_and_pick && python download_hf_model.py
+B) 뷰 확인            python lekiwi_yolo_view.py
+C) 자세 저장          python lekiwi_save_pose.py --name pre_pick | grasp | grasp_closed
+D) 판단만 보기        python lekiwi_yolo_pick.py --dry_run=true
+E) 집기 실행          python lekiwi_yolo_pick.py
+```
+
+자세한 순서와 옵션은 **[Lekiwi YOLO+GRIP 설명서](yolo_and_pick/README.md)** 를 보세요.
 
 ---
 
