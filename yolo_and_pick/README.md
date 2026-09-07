@@ -66,7 +66,7 @@ python download_hf_model.py            # → weights/best.pt (5MB)
 
 ## 3. 실행 순서
 
-### 0) 라즈베리파이에서 호스트 켜기 (세션마다)
+### 0) 르키위[라즈베리파이]에서 호스트 켜기 (세션마다)
 
 ```bash
 python -m lerobot.robots.lekiwi.lekiwi_host \
@@ -78,13 +78,33 @@ python -m lerobot.robots.lekiwi.lekiwi_host \
     --host.connection_time_s=14400
 ```
 
+또는 
+
+```
+./start_lekiwi_host.sh 
+```
+
 호스트에는 **클라이언트가 하나만** 붙습니다. `lekiwi-teleoperate.py` / `lekiwi-record.py` 가 붙어 있으면 먼저 끄세요.
 호스트가 살아 있는지 PC 에서 확인: `ping 192.168.0.201` 이 되고 5555/5556 포트가 열려 있어야 합니다.
 
-### 1) 모델과 카메라 확인
+### 1) 모델과 카메라 확인 [PC에서]
 
 ```bash
 python lekiwi_yolo_view.py
+```
+
+상세히 
+
+```bash
+python lekiwi_yolo_view.py \
+        --robot.remote_ip=192.168.0.201 \
+        --robot.id=lekiwi01 \
+        --yolo.path=weights/best.pt \
+        --yolo.conf=0.5 \
+        --yolo.device=0 \
+        --views='[front, wrist]' \
+        --fps=30 \
+        --display=cv2
 ```
 
 front(왼쪽)·wrist(오른쪽) 뷰에 박스가 그려지고 초록 십자선이 뜨면 정상입니다. 터미널에 뷰별 검출 수 / 최고 conf /
@@ -125,6 +145,23 @@ python lekiwi_yolo_pick.py --dry_run=true
 
 ```bash
 python lekiwi_yolo_pick.py
+```
+
+상세히
+
+```
+python lekiwi_yolo_pick.py \
+        --robot.remote_ip=192.168.0.201 \
+        --robot.id=lekiwi01 \
+        --yolo.path=weights/best.pt \
+        --yolo.conf=0.5 \
+        --yolo.device=0 \
+        --approach.target_size_px=117 \
+        --approach.size_tolerance_px=10 \
+        --approach.center_tolerance_px=10 \
+        --approach.max_speed=0.1 \
+        --views='[front, wrist]' \
+        --fps=30
 ```
 
 처음엔 `--start_paused=true` 로 시작해 화면을 보고 SPACE 로 출발시키거나, `--approach.max_speed=0.05` 로 느리게 시작하는 것을 권합니다.
