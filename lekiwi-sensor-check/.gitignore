@@ -1,0 +1,6 @@
+.deps/
+build/
+.sensor-check.lock
+reports/
+__pycache__/
+*.pyc

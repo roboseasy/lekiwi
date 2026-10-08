@@ -1,0 +1,8 @@
+# Pose of the original motor-kinematics origin, expressed in the current base_link.
+# Derived from the rigid registration of all three old/new wheel mounts.
+# Both URDF sensor transforms and the controller consume these values.
+lekiwi_node:
+  ros__parameters:
+    kinematics_frame_x: 0.007587843843
+    kinematics_frame_y: -0.010776931094
+    kinematics_frame_yaw: 2.094379865161

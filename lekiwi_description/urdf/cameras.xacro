@@ -1,0 +1,46 @@
+<?xml version="1.0"?>
+<robot xmlns:xacro="http://www.ros.org/wiki/xacro">
+  <!-- JSON is a YAML subset; keep the classroom configuration byte-identical. -->
+  <xacro:property name="classroom_camera_config"
+                  value="${xacro.load_yaml('../config/camera_mounts.json')}"
+                  lazy_eval="false"/>
+
+  <xacro:macro name="lekiwi_classroom_camera" params="name">
+    <xacro:property name="camera" value="${classroom_camera_config['cameras'][name]}"/>
+    <xacro:property name="xyz" value="${camera['translation']}"/>
+    <xacro:property name="q" value="${camera['quaternion_xyzw']}"/>
+    <!-- URDF uses fixed-axis RPY; the source quaternion already describes
+         optical axes (+X right, +Y down, +Z forward) in the parent link.
+         Isaac's additional camera-only 180-degree X rotation does not apply. -->
+    <xacro:property name="roll"
+                    value="${atan2(2 * (q[3]*q[0] + q[1]*q[2]), 1 - 2 * (q[0]*q[0] + q[1]*q[1]))}"/>
+    <xacro:property name="pitch"
+                    value="${asin(max(-1.0, min(1.0, 2 * (q[3]*q[1] - q[2]*q[0]))))}"/>
+    <xacro:property name="yaw"
+                    value="${atan2(2 * (q[3]*q[2] + q[0]*q[1]), 1 - 2 * (q[1]*q[1] + q[2]*q[2]))}"/>
+
+    <link name="${name}_camera_optical_frame">
+      <!-- Same display-only housing and lens as classroom robot_cameras.py.
+           The lens front lies at optical Z=0. -->
+      <visual>
+        <origin xyz="0 0 -0.012"/>
+        <geometry><box size="0.024 0.024 0.016"/></geometry>
+        <material name="${name}_camera_housing">
+          <color rgba="0.08 0.09 0.11 1"/>
+        </material>
+      </visual>
+      <visual>
+        <origin xyz="0 0 -0.002"/>
+        <geometry><cylinder radius="0.006" length="0.004"/></geometry>
+        <material name="${name}_camera_lens">
+          <color rgba="0.08 0.35 0.55 1"/>
+        </material>
+      </visual>
+    </link>
+    <joint name="${name}_camera_joint" type="fixed">
+      <parent link="${camera['parent_link']}"/>
+      <child link="${name}_camera_optical_frame"/>
+      <origin xyz="${xyz[0]} ${xyz[1]} ${xyz[2]}" rpy="${roll} ${pitch} ${yaw}"/>
+    </joint>
+  </xacro:macro>
+</robot>

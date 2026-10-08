@@ -1,0 +1,137 @@
+name: ROS 2 Jazzy
+
+'on':
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build-and-test:
+    name: Clean install (${{ matrix.arch }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-24.04
+            arch: amd64
+          - runner: ubuntu-24.04-arm
+            arch: arm64
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 60
+    # A fresh Ubuntu image verifies ROS installation as well as our packages.
+    # ARM64 covers Pi software compatibility, without physical device access.
+    container: ubuntu:24.04
+    env:
+      DEBIAN_FRONTEND: noninteractive
+      LANG: C.UTF-8
+      ROS_DOMAIN_ID: '93'
+      ROS_AUTOMATIC_DISCOVERY_RANGE: LOCALHOST
+      RMW_IMPLEMENTATION: rmw_fastrtps_cpp
+      FASTDDS_BUILTIN_TRANSPORTS: UDPv4
+    steps:
+      - name: Install ROS 2 Jazzy on clean Ubuntu
+        shell: bash
+        run: |
+          mkdir -p validation
+          test "$(dpkg --print-architecture)" = '${{ matrix.arch }}'
+          test ! -d /opt/ros
+          apt-get update
+          apt-get install -y ca-certificates curl git python3 software-properties-common
+          add-apt-repository -y universe
+          lekiwi_ros_apt_version="$(curl -fsSL --retry 3 \
+            https://api.github.com/repos/ros-infrastructure/ros-apt-source/releases/latest \
+            | python3 -c 'import json, sys; print(json.load(sys.stdin)["tag_name"])')"
+          curl -fsSL --retry 3 -o /tmp/ros2-apt-source.deb \
+            "https://github.com/ros-infrastructure/ros-apt-source/releases/download/${lekiwi_ros_apt_version}/ros2-apt-source_${lekiwi_ros_apt_version}.noble_all.deb"
+          dpkg -i /tmp/ros2-apt-source.deb
+          apt-get update
+          apt-get upgrade -y
+          apt-get install -y ros-jazzy-ros-base
+          printf '%s\n' "$lekiwi_ros_apt_version" > validation/ros-apt-source-version.txt
+          source /opt/ros/jazzy/setup.bash
+          /usr/bin/python3 -c 'import rclpy; print("rclpy import passed")'
+      - uses: actions/checkout@v4
+        with:
+          path: src/lekiwi
+      - name: Install build tools and pinned LiDAR sources
+        shell: bash
+        run: |
+          apt-get update
+          apt-get install -y git build-essential cmake python3-colcon-common-extensions \
+            python3-vcstool python3-rosdep python3-opencv python3-numpy python3-pytest \
+            ros-jazzy-usb-cam ros-jazzy-rmw-fastrtps-cpp
+          source /opt/ros/jazzy/setup.bash
+          vcs import src < src/lekiwi/lekiwi.repos
+          if [ ! -f /etc/ros/rosdep/sources.list.d/20-default.list ]; then rosdep init; fi
+          rosdep update
+          rosdep install --from-paths src --ignore-src --rosdistro jazzy -r -y
+          vcs export --exact src > validation/dependencies.repos
+          dpkg-query -W > validation/installed-packages.tsv
+          git -C src/lekiwi rev-parse HEAD > validation/source-commit.txt
+          uname -m > validation/architecture.txt
+      - name: Build packages
+        shell: bash
+        run: |
+          source /opt/ros/jazzy/setup.bash
+          export CMAKE_BUILD_PARALLEL_LEVEL=2
+          export MAKEFLAGS=-j2
+          colcon build --executor sequential --packages-select ydlidar_sdk \
+            --cmake-args -DBUILD_EXAMPLES=OFF -DCMAKE_DISABLE_FIND_PACKAGE_SWIG=TRUE -DSWIG_FOUND=FALSE
+          source install/setup.bash
+          colcon build --executor sequential --packages-select ydlidar_ros2_driver \
+            --cmake-args -DPython3_EXECUTABLE=/usr/bin/python3 \
+            -DCMAKE_EXE_LINKER_FLAGS="-L$GITHUB_WORKSPACE/install/ydlidar_sdk/lib"
+          source install/setup.bash
+          colcon build --executor sequential \
+            --packages-select lekiwi lekiwi_description lekiwi_bringup lekiwi_node \
+            lekiwi_sensors lekiwi_teleop lekiwi_cartographer lekiwi_navigation2 \
+            --cmake-args -DPython3_EXECUTABLE=/usr/bin/python3
+      - name: Test packages
+        shell: bash
+        run: |
+          source /opt/ros/jazzy/setup.bash
+          source install/setup.bash
+          colcon test --executor sequential \
+            --packages-select lekiwi lekiwi_description lekiwi_bringup lekiwi_node \
+            lekiwi_sensors lekiwi_teleop lekiwi_cartographer lekiwi_navigation2
+          colcon test-result --verbose | tee validation/package-tests.log
+          /usr/bin/python3 -m unittest discover -s src/lekiwi/tests/unit -q
+          /usr/bin/python3 -m pytest -q src/lekiwi/lekiwi_teleop/test/test_nav2_motor_guard.py \
+            src/lekiwi/lekiwi_teleop/test/test_hold_to_move_teleop.py \
+            --junitxml=validation/teleop-pytest.xml
+      - name: Check installed teleop and pub/sub with a mock base
+        shell: bash
+        run: |
+          source /opt/ros/jazzy/setup.bash
+          source install/setup.bash
+          /usr/bin/python3 src/lekiwi/tests/integration/test_mock_topics.py \
+            --output-dir validation/topics | tee validation/topics.log
+      - name: Create a map and navigate using it without IMU
+        shell: bash
+        run: |
+          source /opt/ros/jazzy/setup.bash
+          source install/setup.bash
+          /usr/bin/python3 src/lekiwi/tests/integration/test_navigation_mock.py \
+            | tee validation/navigation-no-imu.log
+      - name: Create a map and navigate using it with synthetic IMU
+        shell: bash
+        run: |
+          source /opt/ros/jazzy/setup.bash
+          source install/setup.bash
+          /usr/bin/python3 src/lekiwi/tests/integration/test_navigation_mock.py --imu \
+            | tee validation/navigation-imu.log
+      - name: Preserve logs, topic reports and generated maps
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: lekiwi-jazzy-${{ matrix.arch }}-${{ github.run_attempt }}
+          retention-days: 14
+          path: |
+            validation/
+            log/
+            build/**/Testing/
+            build/**/test_results/
+            /tmp/lekiwi-navigation-mock-*/

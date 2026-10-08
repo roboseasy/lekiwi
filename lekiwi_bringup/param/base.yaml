@@ -1,0 +1,34 @@
+lekiwi_node:
+  ros__parameters:
+    odom_frame: odom
+    base_frame: base_footprint
+    cmd_vel_timeout: 0.3
+    tf_time_offset: 0.0
+    odom_source: encoder
+    encoder_read_period: 0.1
+    encoder_sample_timeout: 0.5
+    # Reference calibration: docs/hardware/slam_navigation.md
+    wheel_radius: 0.05
+    base_radius: 0.13647
+    max_linear_x: 0.11
+    max_linear_y: 0.1
+    max_linear_speed: 0.11
+    max_angular_z: 0.75
+    max_wheel_speed: 2.3009711818284617
+    motor_backend: mock
+    serial_port: /dev/ttyACM0
+    enable_motor_write: false
+    # Wheel IDs follow the model joint order; verify the physical mapping before motion.
+    wheel_ids: [8, 9, 7]
+    wheel_directions: [1.0, 1.0, 1.0]
+    baud_rate: 1000000
+    speed_tick_scale: 651.8986469044033
+    speed_tick_limit: 1500
+    encoder_tick_deadband: 50
+    encoder_feedback_source: position
+    # Feetech raw position wrap modulus. 실측 odom 보정에는 encoder_odom_scale을 사용한다.
+    encoder_position_ticks_per_revolution: 4096.0
+    encoder_odom_scale: 1.0
+    encoder_position_tick_deadband: 0
+    torque_enable: false
+    log_encoder_reads: false

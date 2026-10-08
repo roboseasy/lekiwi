@@ -1,0 +1,15 @@
+<?xml version="1.0"?>
+<robot name="lekiwi" xmlns:xacro="http://www.ros.org/wiki/xacro">
+  <!-- Package paths are adapted here; the classroom source remains unchanged. -->
+  <xacro:arg name="base_mesh_dir" default="package://lekiwi_description/meshes/base"/>
+  <xacro:arg name="soarm_mesh_dir" default="package://lekiwi_description/meshes/soarm"/>
+  <xacro:arg name="use_hardware_sensors" default="false"/>
+  <xacro:include filename="base_and_arm.urdf.xacro"/>
+  <xacro:include filename="cameras.xacro"/>
+  <xacro:lekiwi_classroom_camera name="front"/>
+  <xacro:lekiwi_classroom_camera name="wrist"/>
+  <xacro:include filename="hardware_sensors.xacro"/>
+  <xacro:if value="$(arg use_hardware_sensors)">
+    <xacro:lekiwi_hardware_sensors/>
+  </xacro:if>
+</robot>

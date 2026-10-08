@@ -1,0 +1,31 @@
+<?xml version="1.0"?>
+<?xml-model href="http://download.ros.org/schema/package_format3.xsd" schematypens="http://www.w3.org/2001/XMLSchema"?>
+<package format="3">
+  <name>lekiwi_sensors</name>
+  <version>0.0.1</version>
+  <description>Sensor launch and configuration package for LeKiwi.</description>
+  <maintainer email="ysj@roboseasy.ai">ysj</maintainer>
+  <license>Apache-2.0</license>
+  <license>BSD-3-Clause</license>
+
+  <buildtool_depend>ament_cmake</buildtool_depend>
+
+  <depend>rclcpp</depend>
+  <depend>sensor_msgs</depend>
+
+  <exec_depend>ament_index_python</exec_depend>
+  <exec_depend>launch</exec_depend>
+  <exec_depend>launch_ros</exec_depend>
+  <exec_depend>rclpy</exec_depend>
+  <exec_depend>tf2_ros</exec_depend>
+  <exec_depend>ydlidar_ros2_driver</exec_depend>
+  <exec_depend>usb_cam</exec_depend>
+  <exec_depend>tbb</exec_depend>
+
+  <test_depend>python3-yaml</test_depend>
+  <test_depend>ament_cmake_gtest</test_depend>
+
+  <export>
+    <build_type>ament_cmake</build_type>
+  </export>
+</package>

@@ -1,13 +1,42 @@
-# Model weights (too large for git)
-yolo_and_pick/weights/
+# Colcon workspace output
+/build/
+/install/
+/log/
+/.colcon/
 
-# Python cache
-__pycache__/
+# Python and test output
 *.py[cod]
-*$py.class
+__pycache__/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+.coverage.*
+htmlcov/
+*.egg-info/
 
-# Editor / OS
-.vscode/
-.idea/
-*.swp
+# Local environments and editor state
+/.venv/
+/venv/
+/.env
+/.env.*
+!/.env.example
+/.worktrees/
+/.superpowers/
+/.vscode/
+/.idea/
 .DS_Store
+
+# Local ROS recordings and generated maps; the tracked exports ZIP is intentional
+/.ros/
+/maps/
+/bags/
+/rosbags/
+/rosbag2_*/
+*.bag
+*.db3
+*.mcap
+*.pbstream
+
+# Local tool diagnostics
+/error.log

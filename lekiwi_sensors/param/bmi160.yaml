@@ -1,0 +1,11 @@
+bmi160_node:
+  ros__parameters:
+    i2c_device: /dev/i2c-1
+    i2c_address: 104
+    frame_id: imu_link
+    topic_name: imu/data_raw
+    publish_rate_hz: 100.0
+    gyro_bias_samples: 200
+    axis_map: [1, 2, 3]
+    angular_velocity_variance: 0.0004
+    linear_acceleration_variance: 0.04

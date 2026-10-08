@@ -1,0 +1,4 @@
+# Preserve the byte-exact CRLF line endings of the pinned Bosch upstream files.
+/lekiwi_sensors/vendor/bosch_bmi160/LICENSE -text whitespace=-trailing-space
+/lekiwi_sensors/vendor/bosch_bmi160/*.c -text whitespace=-trailing-space
+/lekiwi_sensors/vendor/bosch_bmi160/*.h -text whitespace=-trailing-space

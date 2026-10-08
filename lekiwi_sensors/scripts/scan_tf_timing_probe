@@ -1,0 +1,214 @@
+#!/usr/bin/env python3
+from __future__ import annotations
+
+from dataclasses import dataclass
+from typing import Optional
+
+
+@dataclass(frozen=True)
+class TimingSample:
+    scan_stamp_sec: float
+    node_now_sec: float
+    latest_tf_stamp_sec: Optional[float]
+    tf_available: bool
+    error: str = ""
+
+    @property
+    def now_minus_scan_sec(self) -> float:
+        return self.node_now_sec - self.scan_stamp_sec
+
+    @property
+    def latest_tf_minus_scan_sec(self) -> Optional[float]:
+        if self.latest_tf_stamp_sec is None:
+            return None
+        return self.latest_tf_stamp_sec - self.scan_stamp_sec
+
+
+@dataclass(frozen=True)
+class OffsetHint:
+    recommended_offset_sec: float
+    max_tf_lag_sec: float
+    successful_lookup_count: int
+    failed_lookup_count: int
+
+
+def _round_seconds(value: float) -> float:
+    return round(value + 1e-12, 3)
+
+
+def suggest_tf_time_offset(samples: list[TimingSample], margin_sec: float = 0.01) -> OffsetHint:
+    successful_lookup_count = sum(1 for sample in samples if sample.tf_available)
+    failed_lookup_count = len(samples) - successful_lookup_count
+    lags = [
+        -delta
+        for sample in samples
+        for delta in [sample.latest_tf_minus_scan_sec]
+        if delta is not None and delta < 0.0
+    ]
+    max_tf_lag_sec = max(lags, default=0.0)
+    recommended_offset_sec = 0.0
+    if max_tf_lag_sec > 0.0:
+        recommended_offset_sec = max_tf_lag_sec + margin_sec
+
+    return OffsetHint(
+        recommended_offset_sec=_round_seconds(recommended_offset_sec),
+        max_tf_lag_sec=_round_seconds(max_tf_lag_sec),
+        successful_lookup_count=successful_lookup_count,
+        failed_lookup_count=failed_lookup_count,
+    )
+
+
+def _time_to_sec(time_value) -> float:
+    return time_value.nanoseconds * 1e-9
+
+
+class ScanTfTimingProbe:
+    def __init__(self) -> None:
+        import rclpy
+        from rclpy.node import Node
+        from rclpy.qos import qos_profile_sensor_data
+        from sensor_msgs.msg import LaserScan
+        import tf2_ros
+
+        class _ProbeNode(Node):
+            def __init__(self) -> None:
+                super().__init__('scan_tf_timing_probe')
+                self.declare_parameter('scan_topic', '/scan')
+                self.declare_parameter('target_frame', 'odom')
+                self.declare_parameter('source_frame', '')
+                self.declare_parameter('sample_count', 20)
+
+                self.scan_topic = self.get_parameter('scan_topic').value
+                self.target_frame = self.get_parameter('target_frame').value
+                self.source_frame_override = self.get_parameter('source_frame').value
+                self.sample_count = max(1, int(self.get_parameter('sample_count').value))
+                self.samples: list[TimingSample] = []
+                self.done = False
+
+                self.tf_buffer = tf2_ros.Buffer()
+                self.tf_listener = tf2_ros.TransformListener(self.tf_buffer, self)
+                self.subscription = self.create_subscription(
+                    LaserScan,
+                    self.scan_topic,
+                    self._on_scan,
+                    qos_profile_sensor_data,
+                )
+                self.get_logger().info(
+                    'scan_tf_timing_probe started: '
+                    f'scan_topic={self.scan_topic}, target_frame={self.target_frame}, '
+                    f'source_frame={self.source_frame_override or "<scan.header.frame_id>"}, '
+                    f'sample_count={self.sample_count}'
+                )
+
+            def _on_scan(self, msg) -> None:
+                from rclpy.duration import Duration
+                from rclpy.time import Time
+
+                source_frame = self.source_frame_override or msg.header.frame_id
+                scan_time = Time.from_msg(msg.header.stamp)
+                now_time = self.get_clock().now()
+                latest_tf_stamp_sec = None
+                tf_available = False
+                error_parts = []
+
+                if not source_frame:
+                    error_parts.append('source_frame is empty')
+                else:
+                    try:
+                        tf_available = self.tf_buffer.can_transform(
+                            self.target_frame,
+                            source_frame,
+                            scan_time,
+                            timeout=Duration(seconds=0.0),
+                        )
+                        if not tf_available:
+                            error_parts.append('can_transform at scan stamp returned false')
+                    except Exception as exc:  # noqa: BLE001 - ROS 2 tf exceptions vary by distro.
+                        error_parts.append(f'can_transform failed: {exc}')
+
+                    try:
+                        latest_tf = self.tf_buffer.lookup_transform(
+                            self.target_frame,
+                            source_frame,
+                            Time(),
+                        )
+                        latest_tf_stamp_sec = _time_to_sec(Time.from_msg(latest_tf.header.stamp))
+                    except Exception as exc:  # noqa: BLE001 - keep probe diagnostic-only.
+                        error_parts.append(f'latest lookup failed: {exc}')
+
+                sample = TimingSample(
+                    scan_stamp_sec=_time_to_sec(scan_time),
+                    node_now_sec=_time_to_sec(now_time),
+                    latest_tf_stamp_sec=latest_tf_stamp_sec,
+                    tf_available=tf_available,
+                    error='; '.join(error_parts),
+                )
+                self.samples.append(sample)
+                self._log_sample(len(self.samples), source_frame, sample)
+
+                if len(self.samples) >= self.sample_count:
+                    self._log_summary()
+                    self.done = True
+
+            def _log_sample(self, index: int, source_frame: str, sample: TimingSample) -> None:
+                latest_delta = sample.latest_tf_minus_scan_sec
+                latest_delta_text = 'n/a' if latest_delta is None else f'{latest_delta:.3f}s'
+                status = 'ok' if sample.tf_available else 'fail'
+                error_text = f', error={sample.error}' if sample.error else ''
+                self.get_logger().info(
+                    f'sample {index}/{self.sample_count}: '
+                    f'scan_stamp={sample.scan_stamp_sec:.3f}, '
+                    f'node_now={sample.node_now_sec:.3f}, '
+                    f'now-scan={sample.now_minus_scan_sec:.3f}s, '
+                    f'target={self.target_frame}, source={source_frame}, '
+                    f'latest_tf-scan={latest_delta_text}, tf_at_scan={status}'
+                    f'{error_text}'
+                )
+
+            def _log_summary(self) -> None:
+                hint = suggest_tf_time_offset(self.samples)
+                now_minus_scan_values = [sample.now_minus_scan_sec for sample in self.samples]
+                self.get_logger().info(
+                    'summary: '
+                    f'samples={len(self.samples)}, '
+                    f'tf_lookup_success={hint.successful_lookup_count}, '
+                    f'tf_lookup_fail={hint.failed_lookup_count}, '
+                    f'now-scan_min={min(now_minus_scan_values):.3f}s, '
+                    f'now-scan_max={max(now_minus_scan_values):.3f}s, '
+                    f'max_tf_lag={hint.max_tf_lag_sec:.3f}s, '
+                    f'recommended_tf_time_offset={hint.recommended_offset_sec:.3f}s'
+                )
+                self.get_logger().info(
+                    'hint: use this value only when RViz reports future extrapolation for '
+                    f'{self.target_frame} -> scan frame, then rerun the probe after changing '
+                    'tf_time_offset.'
+                )
+
+        self.rclpy = rclpy
+        self.node = _ProbeNode()
+
+    def run(self) -> None:
+        from rclpy.executors import ExternalShutdownException
+
+        try:
+            while self.rclpy.ok() and not self.node.done:
+                self.rclpy.spin_once(self.node, timeout_sec=0.2)
+        except (KeyboardInterrupt, ExternalShutdownException):
+            pass
+        finally:
+            self.node.destroy_node()
+
+
+def main() -> None:
+    import rclpy
+
+    rclpy.init()
+    try:
+        ScanTfTimingProbe().run()
+    finally:
+        if rclpy.ok():
+            rclpy.shutdown()
+
+
+if __name__ == '__main__':
+    main()

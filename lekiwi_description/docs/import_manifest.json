@@ -1,0 +1,117 @@
+{
+  "source_project": "lekiwi_classroom_members",
+  "source_commit": "b4688d238448d86f4ac5a202e0ee8bfa6a3df006",
+  "source_asset_directory": "isaac_sim/assets/lekiwi_soarm",
+  "files": [
+    {
+      "source": "meshes/base/lekiwi_body_soarm_mount.stl",
+      "destination": "meshes/base/lekiwi_body_soarm_mount.stl",
+      "sha256": "3bbbeb5d85772893fddff3ad98e97eb0b8fac088afa7baac7f8b26e6e9ed23a2"
+    },
+    {
+      "source": "meshes/base/omni_wheel.stl",
+      "destination": "meshes/base/omni_wheel.stl",
+      "sha256": "4c8e0e2b16340d3fd6738ae0077c1363c719b71ed7a54129103dddbd058b3c50"
+    },
+    {
+      "source": "meshes/soarm/base_motor_holder_so101_v1.stl",
+      "destination": "meshes/soarm/base_motor_holder_so101_v1.stl",
+      "sha256": "8cd2f241037ea377af1191fffe0dd9d9006beea6dcc48543660ed41647072424"
+    },
+    {
+      "source": "meshes/soarm/base_so101_v2.stl",
+      "destination": "meshes/soarm/base_so101_v2.stl",
+      "sha256": "bb12b7026575e1f70ccc7240051f9d943553bf34e5128537de6cd86fae33924d"
+    },
+    {
+      "source": "meshes/soarm/motor_holder_so101_base_v1.stl",
+      "destination": "meshes/soarm/motor_holder_so101_base_v1.stl",
+      "sha256": "31242ae6fb59d8b15c66617b88ad8e9bded62d57c35d11c0c43a70d2f4caa95b"
+    },
+    {
+      "source": "meshes/soarm/motor_holder_so101_wrist_v1.stl",
+      "destination": "meshes/soarm/motor_holder_so101_wrist_v1.stl",
+      "sha256": "887f92e6013cb64ea3a1ab8675e92da1e0beacfd5e001f972523540545e08011"
+    },
+    {
+      "source": "meshes/soarm/moving_jaw_so101_v1.stl",
+      "destination": "meshes/soarm/moving_jaw_so101_v1.stl",
+      "sha256": "785a9dded2f474bc1d869e0d3dae398a3dcd9c0c345640040472210d2861fa9d"
+    },
+    {
+      "source": "meshes/soarm/rotation_pitch_so101_v1.stl",
+      "destination": "meshes/soarm/rotation_pitch_so101_v1.stl",
+      "sha256": "9be900cc2a2bf718102841ef82ef8d2873842427648092c8ed2ca1e2ef4ffa34"
+    },
+    {
+      "source": "meshes/soarm/sts3215_03a_no_horn_v1.stl",
+      "destination": "meshes/soarm/sts3215_03a_no_horn_v1.stl",
+      "sha256": "75ef3781b752e4065891aea855e34dc161a38a549549cd0970cedd07eae6f887"
+    },
+    {
+      "source": "meshes/soarm/sts3215_03a_v1.stl",
+      "destination": "meshes/soarm/sts3215_03a_v1.stl",
+      "sha256": "a37c871fb502483ab96c256baf457d36f2e97afc9205313d9c5ab275ef941cd0"
+    },
+    {
+      "source": "meshes/soarm/under_arm_so101_v1.stl",
+      "destination": "meshes/soarm/under_arm_so101_v1.stl",
+      "sha256": "d01d1f2de365651dcad9d6669e94ff87ff7652b5bb2d10752a66a456a86dbc71"
+    },
+    {
+      "source": "meshes/soarm/upper_arm_so101_v1.stl",
+      "destination": "meshes/soarm/upper_arm_so101_v1.stl",
+      "sha256": "475056e03a17e71919b82fd88ab9a0b898ab50164f2a7943652a6b2941bb2d4f"
+    },
+    {
+      "source": "meshes/soarm/waveshare_mounting_plate_so101_v2.stl",
+      "destination": "meshes/soarm/waveshare_mounting_plate_so101_v2.stl",
+      "sha256": "e197e24005a07d01bbc06a8c42311664eaeda415bf859f68fa247884d0f1a6e9"
+    },
+    {
+      "source": "meshes/soarm/wrist_roll_follower_so101_v1.stl",
+      "destination": "meshes/soarm/wrist_roll_follower_so101_v1.stl",
+      "sha256": "4b17b410a12d64ec39554abc3e8054d8a97384b2dc4a8d95a5ecb2a93670f5f4"
+    },
+    {
+      "source": "meshes/soarm/wrist_roll_pitch_so101_v2.stl",
+      "destination": "meshes/soarm/wrist_roll_pitch_so101_v2.stl",
+      "sha256": "6c7ec5525b4d8b9e397a30ab4bb0037156a5d5f38a4adf2c7d943d6c56eda5ae"
+    },
+    {
+      "source": "source_xacro/lekiwi_soarm.urdf.xacro",
+      "destination": "urdf/base_and_arm.urdf.xacro",
+      "sha256": "065fb3191e1f1088c5cd69132eeb83e833e18ce952d0a806fabfb50b2949f3a0"
+    },
+    {
+      "source": "source_xacro/so101/end_effectors/so101_ee_common.xacro",
+      "destination": "urdf/so101/end_effectors/so101_ee_common.xacro",
+      "sha256": "026c32ec178b7ad2512f2f37ed1f73b288dee0aad6f110d800e2843828991c36"
+    },
+    {
+      "source": "source_xacro/so101/end_effectors/so101_ee_follower.xacro",
+      "destination": "urdf/so101/end_effectors/so101_ee_follower.xacro",
+      "sha256": "cd6e6cc90ee304ed40308d5d75e41b83ddcad40ac86013671060fffb365b9b46"
+    },
+    {
+      "source": "source_xacro/so101/so101_arm_common.xacro",
+      "destination": "urdf/so101/so101_arm_common.xacro",
+      "sha256": "07b880393f46fff2f00a258112ff0b8520306262a08db0b70dd6233a129323e3"
+    },
+    {
+      "source": "source_xacro/so101/so101_macros.xacro",
+      "destination": "urdf/so101/so101_macros.xacro",
+      "sha256": "cb1b5b012db93e7dcb4f7676b15b9dde0326b786a147e42d6a810a51073999e3"
+    },
+    {
+      "source": "source_xacro/so101/so101_materials.xacro",
+      "destination": "urdf/so101/so101_materials.xacro",
+      "sha256": "29e07e4e945da5a209955a90828ea370ef4a7e7215f3623d642bd1b02b409f4e"
+    },
+    {
+      "source": "SOURCE.md",
+      "destination": "docs/SOURCE.md",
+      "sha256": "44c8eb031ec93ee129c2b79618b7b284c812bd45b2d414b8ed4937e406f3857d"
+    }
+  ]
+}

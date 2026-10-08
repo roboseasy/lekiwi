@@ -1,0 +1,102 @@
+#!/usr/bin/env python3
+from __future__ import annotations
+
+from copy import deepcopy
+
+
+def normalize_scan_timing(scan_msg, zero_time_increment: bool = True):
+    normalized = deepcopy(scan_msg)
+    if zero_time_increment:
+        normalized.time_increment = 0.0
+    return normalized
+
+
+def validate_distinct_topics(input_topic: str, output_topic: str, resolve_topic_name) -> None:
+    if not input_topic.strip() or not output_topic.strip():
+        raise ValueError("scan timing normalizer topics must be non-empty")
+
+    resolved_input = resolve_topic_name(input_topic)
+    resolved_output = resolve_topic_name(output_topic)
+    if resolved_input == resolved_output:
+        raise ValueError(
+            "scan timing normalizer topics resolve to the same name: "
+            f"{resolved_input}"
+        )
+
+
+class ScanTimingNormalizer:
+    def __init__(self) -> None:
+        import rclpy
+        from rclpy.node import Node
+        from rclpy.qos import qos_profile_sensor_data
+        from sensor_msgs.msg import LaserScan
+
+        class _NormalizerNode(Node):
+            def __init__(self) -> None:
+                super().__init__('scan_timing_normalizer')
+                self.declare_parameter('input_topic', '/scan_raw')
+                self.declare_parameter('output_topic', '/scan')
+                self.declare_parameter('zero_time_increment', True)
+
+                self.input_topic = self.get_parameter('input_topic').value
+                self.output_topic = self.get_parameter('output_topic').value
+                self.zero_time_increment = bool(self.get_parameter('zero_time_increment').value)
+
+                validate_distinct_topics(
+                    self.input_topic,
+                    self.output_topic,
+                    self.resolve_topic_name,
+                )
+
+                self.publisher = self.create_publisher(
+                    LaserScan,
+                    self.output_topic,
+                    qos_profile_sensor_data,
+                )
+                self.subscription = self.create_subscription(
+                    LaserScan,
+                    self.input_topic,
+                    self._on_scan,
+                    qos_profile_sensor_data,
+                )
+                self.get_logger().info(
+                    'scan_timing_normalizer started: '
+                    f'input_topic={self.input_topic}, output_topic={self.output_topic}, '
+                    f'zero_time_increment={self.zero_time_increment}'
+                )
+
+            def _on_scan(self, msg) -> None:
+                self.publisher.publish(
+                    normalize_scan_timing(
+                        msg,
+                        zero_time_increment=self.zero_time_increment,
+                    )
+                )
+
+        self.rclpy = rclpy
+        self.node = _NormalizerNode()
+
+    def run(self) -> None:
+        from rclpy.executors import ExternalShutdownException
+
+        try:
+            self.rclpy.spin(self.node)
+        except (KeyboardInterrupt, ExternalShutdownException):
+            pass
+        finally:
+            self.node.destroy_node()
+
+
+def main() -> None:
+    import rclpy
+
+    rclpy.init()
+    try:
+        ScanTimingNormalizer().run()
+    finally:
+        if rclpy.ok():
+            rclpy.shutdown()
+
+
+if __name__ == '__main__':
+    main()

@@ -1,0 +1,22 @@
+<?xml version="1.0"?>
+<robot xmlns:xacro="http://www.ros.org/wiki/xacro">
+  <xacro:include filename="sensors.xacro"/>
+  <xacro:macro name="lekiwi_hardware_sensors" params="">
+    <material name="lekiwi_lidar"><color rgba="0.03 0.03 0.03 1"/></material>
+    <!-- 2026-09-22 user measurement relative to SOARM base, converted mm -> m.
+         Lidar +X matches base_footprint +X; upside-down mounting reverses Y and Z.
+         The default SOARM mount has zero rotation relative to base_footprint. -->
+    <xacro:lekiwi_lidar_link parent="soarm_base_link"
+      xyz="-0.02067 0 -0.10250"
+      rpy="${pi} 0 0" body_offset_z="-0.018"/>
+    <!-- TEMPORARY 2026-09-22: user places IMU 50 mm above lidar along base +Z.
+         Assume identical X/Y until measured; use SOARM parent because lidar +Z points DOWN.
+         2026-09-23 user-selected nominal right-angle mount: sensor +X points robot left.
+         Earlier manual lifts estimated about 86 deg but did not establish absolute yaw.
+         Roll/pitch=0 is an upright assumption, not a bias-separated tilt calibration.
+         See docs/hardware/bmi160_imu_validation.md before precision or SLAM use. -->
+    <xacro:lekiwi_imu_link parent="soarm_base_link"
+      xyz="-0.02067 0 -0.05250"
+      rpy="0 0 ${pi / 2}"/>
+  </xacro:macro>
+</robot>

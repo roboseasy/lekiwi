@@ -1,0 +1,96 @@
+#!/usr/bin/python3
+"""Mask self returns without changing SDK scan geometry or acquisition timing."""
+from copy import deepcopy
+import math
+
+
+def parse_sectors(values):
+    sectors = []
+    for value in values:
+        center, width = map(float, value.split(':'))
+        if not (math.isfinite(center) and math.isfinite(width) and 0 < width < 360):
+            raise ValueError('wheel sector must be finite center:width degrees, 0 < width < 360')
+        sectors.append((math.radians(center), math.radians(width / 2)))
+    return sectors
+
+
+def filter_scan(scan, self_radius, min_intensity, sectors=(), rotation=None):
+    """Sector bearings use base_footprint axes; radius uses the laser origin.
+
+    Rejected beams become NaN, never free-space rays. Preserve indexing and times.
+    Rotation is the complete lidar->base quaternion, including an inverted mount.
+    """
+    if not all(math.isfinite(v) and v >= 0 for v in (self_radius, min_intensity)):
+        raise ValueError('radius and intensity threshold must be finite and nonnegative')
+    if min_intensity > 0 and len(scan.intensities) != len(scan.ranges):
+        raise ValueError('intensity filtering requested but intensities are missing')
+    if sectors and rotation is None:
+        raise ValueError('wheel masking requires lidar-to-base rotation')
+    out = deepcopy(scan)
+    for i, distance in enumerate(scan.ranges):
+        reject = not math.isfinite(distance) or distance < max(self_radius, scan.range_min) or distance > scan.range_max
+        if min_intensity > 0:
+            reject |= not math.isfinite(scan.intensities[i]) or scan.intensities[i] < min_intensity
+        if sectors:
+            angle = scan.angle_min + i * scan.angle_increment
+            x, y, z, w = rotation
+            ca, sa = math.cos(angle), math.sin(angle)
+            bx = (1 - 2 * (y*y + z*z)) * ca + 2 * (x*y - z*w) * sa
+            by = 2 * (x*y + z*w) * ca + (1 - 2 * (x*x + z*z)) * sa
+            bearing = math.atan2(by, bx)
+            reject |= any(abs(math.atan2(math.sin(bearing-c), math.cos(bearing-c))) <= h for c, h in sectors)
+        if reject:
+            out.ranges[i] = float('nan')
+    return out
+
+
+def main():
+    import rclpy
+    from rclpy.node import Node
+    from rclpy.qos import qos_profile_sensor_data
+    from sensor_msgs.msg import LaserScan
+    from tf2_ros import Buffer, TransformListener, TransformException
+
+    rclpy.init()
+    node = Node('navigation_scan_filter')
+    defaults = {'input_topic': '/scan', 'output_topic': '/scan_navigation',
+                'base_frame': 'base_footprint', 'self_radius': 0.19, 'min_intensity': 0.0,
+                'mask_wheels': False, 'wheel_sectors': ['179.5:38.5', '61.0:35.5', '-59.3:34.0']}
+    values = {k: node.declare_parameter(k, v).value for k, v in defaults.items()}
+    if node.resolve_topic_name(values['input_topic']) == node.resolve_topic_name(values['output_topic']):
+        raise ValueError('input and output topics must differ')
+    if not all(math.isfinite(values[k]) and values[k] >= 0 for k in ('self_radius', 'min_intensity')):
+        raise ValueError('invalid filter thresholds')
+    sectors = parse_sectors(values['wheel_sectors']) if values['mask_wheels'] else ()
+    buffer = Buffer()
+    listener = TransformListener(buffer, node)
+    publisher = node.create_publisher(LaserScan, values['output_topic'], qos_profile_sensor_data)
+
+    def callback(scan):
+        try:
+            rotation = None
+            if sectors:
+                q = buffer.lookup_transform(values['base_frame'], scan.header.frame_id,
+                                            rclpy.time.Time.from_msg(scan.header.stamp)).transform.rotation
+                rotation = (q.x, q.y, q.z, q.w)
+            filtered = filter_scan(scan, values['self_radius'], values['min_intensity'], sectors, rotation)
+            if not any(math.isfinite(value) for value in filtered.ranges):
+                raise ValueError('no usable ranges after filtering')
+            publisher.publish(filtered)
+        except (TransformException, ValueError) as exc:
+            node.get_logger().error(f'Scan withheld: {exc}', throttle_duration_sec=2.0)
+
+    subscription = node.create_subscription(LaserScan, values['input_topic'], callback, qos_profile_sensor_data)
+    node.get_logger().info(f"Navigation scan: {values['input_topic']} -> {values['output_topic']}; wheel mask={bool(sectors)}")
+    try:
+        rclpy.spin(node)
+    except (KeyboardInterrupt, rclpy.executors.ExternalShutdownException):
+        pass
+    finally:
+        node.destroy_node()
+        if rclpy.ok():
+            rclpy.shutdown()
+
+
+if __name__ == '__main__':
+    main()

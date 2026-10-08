@@ -1,0 +1,12 @@
+navigation_scan_filter:
+  ros__parameters:
+    input_topic: /scan
+    output_topic: /scan_navigation
+    base_frame: base_footprint
+    # Initial self-reflection cutoff; verify against each assembled robot and nearby obstacles.
+    self_radius: 0.19
+    # Validate the sensor's intensity scale on each device before increasing this threshold.
+    min_intensity: 0.0
+    # Reference sectors align with observed wheel directions, but whole-sector masking discards distant returns.
+    mask_wheels: false
+    wheel_sectors: ['179.5:38.5', '61.0:35.5', '-59.3:34.0']

@@ -1,0 +1,158 @@
+name: Customer PC and Pi first use
+
+'on':
+  push:
+    branches: [feature/lekiwi-ros2]
+    paths:
+      - .github/workflows/customer-first-use.yml
+      - tests/customer/**
+      - lekiwi-sensor-check/**
+      - tools/prepare_ros.py
+      - tools/install_ros.sh
+      - tools/ros_env.sh
+      - tools/save_map.sh
+      - tools/validation.sh
+      - tools/configure_wifi.py
+      - README.md
+      - lekiwi_*/**
+      - lekiwi.repos
+  workflow_dispatch:
+    inputs:
+      installation_run_id:
+        description: Reuse the independently installed images from this successful install run
+        required: false
+        default: ''
+        type: string
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  gui-input:
+    name: Check virtual keyboard (${{ matrix.arch }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-24.04
+            arch: amd64
+          - runner: ubuntu-24.04-arm
+            arch: arm64
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Verify Tk keyboard delivery on an isolated display
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y python3-tk python3-yaml xvfb xdotool x11-utils \
+            build-essential cmake git psmisc util-linux
+          /usr/bin/python3 tests/customer/test_gui_input.py
+          /usr/bin/python3 tests/customer/test_lifecycle_ready.py
+          /usr/bin/python3 tests/customer/test_actuator_scheduling.py
+          /usr/bin/python3 tests/customer/test_run_pair.py
+          /usr/bin/python3 tests/customer/test_readme_commands.py
+          /usr/bin/python3 tests/customer/test_prepare_ros.py
+          /usr/bin/python3 tests/customer/test_save_map.py
+          /usr/bin/python3 tests/customer/test_validation.py
+          /usr/bin/python3 -m unittest discover -s lekiwi-sensor-check/tests -q
+          /usr/bin/python3 tests/customer/test_serial_wheels.py
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: customer-gui-input-${{ matrix.arch }}
+          path: evidence/
+
+  install:
+    if: ${{ inputs.installation_run_id == '' }}
+    name: README install (${{ matrix.arch }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-24.04
+            arch: amd64
+          - runner: ubuntu-24.04-arm
+            arch: arm64
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.ref_name }}
+          persist-credentials: false
+      - name: Build a fresh customer image using README commands
+        env:
+          ARCH: ${{ matrix.arch }}
+        run: |
+          set -o pipefail
+          mkdir -p evidence
+          docker build --progress=plain -f tests/customer/Dockerfile \
+            --build-arg SOURCE_COMMIT="$GITHUB_SHA" -t "lekiwi-customer:$ARCH" . \
+            2>&1 | tee evidence/install.log
+          docker run --rm "lekiwi-customer:$ARCH" cat /home/customer/installation.json \
+            > evidence/installation.json
+          docker save "lekiwi-customer:$ARCH" | gzip -1 > "customer-$ARCH.tar.gz"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: customer-image-${{ matrix.arch }}
+          compression-level: 0
+          retention-days: 1
+          path: customer-${{ matrix.arch }}.tar.gz
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: customer-install-${{ matrix.arch }}
+          retention-days: 14
+          path: evidence/
+
+  pair:
+    name: Separate PC and Pi (${{ matrix.arch }} native)
+    needs: [install, gui-input]
+    if: ${{ always() && !cancelled() && needs.gui-input.result == 'success' && (needs.install.result == 'success' || inputs.installation_run_id != '') }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-24.04
+            arch: amd64
+          - runner: ubuntu-24.04-arm
+            arch: arm64
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Free unused SDK space on this disposable runner
+        run: |
+          df -h /
+          sudo rm -rf /usr/local/lib/android /usr/share/dotnet
+          df -h /
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: customer-image-${{ matrix.arch }}
+          merge-multiple: true
+          path: images
+          run-id: ${{ inputs.installation_run_id || github.run_id }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+      - name: Load the independently installed images
+        env:
+          ARCH: ${{ matrix.arch }}
+        run: |
+          set -o pipefail
+          gzip -dc "images/customer-$ARCH.tar.gz" | docker load
+          rm "images/customer-$ARCH.tar.gz"
+      - name: Follow README from robot bringup to Nav2 goal and disarm
+        env:
+          ARCH: ${{ matrix.arch }}
+        run: python3 tests/customer/run_pair.py --arch "$ARCH"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: customer-pc-pi-evidence-${{ matrix.arch }}
+          retention-days: 14
+          path: evidence/
